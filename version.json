@@ -1,5 +1,5 @@
 {
-  "version": "0.1.2",
-  "notes": "Rediseño de interfaz: tema oscuro con aurora y cristal, nuevo logo Nexus, temas Ataplaygame y DoctoraPaula. Whitelist remota para staff y corrección del instalador de Forge.",
+  "version": "0.1.2r",
+  "notes": "Logo real del estudio Nexus en el login y la barra superior. Interfaz rediseñada con aurora y cristal, whitelist remota para staff y corrección del instalador de Forge.",
   "url": "https://raw.githubusercontent.com/kazdev97/NexusLauncher/main/builds/nexuslauncher.exe"
 }

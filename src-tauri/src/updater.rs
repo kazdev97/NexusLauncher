@@ -25,14 +25,21 @@ struct RemoteMeta {
     #[serde(default)]
     url: String,
 }
+/// Compara versiones como "0.1.2", "0.1.2r" o "0.1.2-r".
+/// Los guiones se ignoran para que "0.1.2-r" == "0.1.2r" (evita bucle de
+/// actualización), y el sufijo alfabético se usa como revisión: sin sufijo < "r".
 pub fn version_gt(a: &str, b: &str) -> bool {
-    let num = |s: &str| -> Vec<i64> {
-        s.split(|c: char| !c.is_ascii_digit())
+    fn parse(s: &str) -> (Vec<i64>, String) {
+        let norm = s.trim().to_lowercase().replace(['-', '_', ' '], "");
+        let nums = norm
+            .split(|c: char| !c.is_ascii_digit())
             .filter_map(|p| p.parse().ok())
-            .collect()
-    };
-    let an = num(a);
-    let bn = num(b);
+            .collect();
+        let suffix = norm.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+        (nums, suffix)
+    }
+    let (an, asuf) = parse(a);
+    let (bn, bsuf) = parse(b);
     let n = an.len().max(bn.len());
     for i in 0..n {
         let x = *an.get(i).unwrap_or(&0);
@@ -41,7 +48,7 @@ pub fn version_gt(a: &str, b: &str) -> bool {
             return x > y;
         }
     }
-    false
+    asuf > bsuf
 }
 pub async fn check_update() -> Result<UpdateInfo, String> {
     let client = http_client();
@@ -115,4 +122,19 @@ Start-Process -FilePath '{cur_str}'"
         .map_err(|e| format!("lanzar el instalador de la actualización: {e}"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_gt;
+
+    #[test]
+    fn revision_is_newer_than_plain_but_not_repeated() {
+        assert!(version_gt("0.1.2r", "0.1.2"));
+        assert!(version_gt("0.1.2-r", "0.1.2"));
+        assert!(!version_gt("0.1.2-r", "0.1.2r"));
+        assert!(!version_gt("0.1.2r", "0.1.2-r"));
+        assert!(version_gt("0.1.3", "0.1.2r"));
+        assert!(!version_gt("0.1.2", "0.1.2r"));
+    }
 }

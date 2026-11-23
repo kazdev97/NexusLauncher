@@ -35,8 +35,8 @@ body[data-launcher-theme=ataplay] .xmas-decor{display:block;position:fixed;inset
 .gate-grid{position:absolute;inset:0}
 .gate-card{position:relative;width:min(440px,90vw);padding:42px 38px;text-align:center;border-radius:28px;background:var(--panel);backdrop-filter:blur(24px) saturate(140%);box-shadow:var(--glow);animation:rise .9s var(--ease) both}
 .gate-card::before{content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1px;background:var(--grad);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;opacity:.6}
-.gate-logo{width:84px;height:84px;margin:0 auto 18px;animation:float 5s ease-in-out infinite;filter:drop-shadow(0 0 24px var(--a))}
-.gate-logo img{width:100%;height:100%}
+.gate-logo{width:min(280px,82%);margin:0 auto 18px;animation:float 5s ease-in-out infinite;filter:drop-shadow(0 0 24px var(--a))}
+.gate-logo img{width:100%;height:auto;max-height:110px;object-fit:contain;display:block}
 .gate-kicker{color:var(--b);font-size:12.5px;font-weight:600}
 .gate-title{margin:6px 0 10px;font-size:40px;font-weight:800;letter-spacing:-1.5px}
 .gate-title span,.brand-name span{font-weight:300;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;margin-left:4px}
@@ -50,8 +50,8 @@ body[data-launcher-theme=ataplay] .xmas-decor{display:block;position:fixed;inset
 @keyframes fade{from{opacity:0}}
 .sidebar{display:flex;align-items:center;gap:22px;padding:12px 24px;margin:14px 18px 0;border-radius:20px;background:var(--panel);backdrop-filter:blur(20px);box-shadow:0 0 0 1px var(--line)}
 .brand{display:flex;align-items:center;gap:11px}
-.brand-logo img{width:34px;height:34px;display:block;transition:transform .6s var(--ease)}
-.brand-logo:hover img{transform:rotate(60deg) scale(1.1)}
+.brand-logo img{width:auto;height:34px;max-width:140px;object-fit:contain;display:block;transition:transform .6s var(--ease)}
+.brand-logo:hover img{transform:scale(1.07)}
 .brand-name{font-size:19px;font-weight:800;letter-spacing:-.6px}
 .nav-items{display:flex;gap:4px;margin:0 auto;padding:4px;border-radius:14px;background:rgba(0,0,0,.3)}
 .nav-item{position:relative;border:0;background:none;color:var(--muted);font:600 13.5px inherit;font-family:inherit;padding:9px 18px;border-radius:10px;cursor:pointer;transition:color .2s,background .25s}
