@@ -2,6 +2,8 @@ use crate::config::instances_dir;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -34,6 +36,7 @@ struct ResolvedVersion {
     game_args: Vec<String>,
     client_jar_path: String,
     extra_jars: Vec<String>,
+    asset_index: String,
 }
 
 fn resolve_libraries(json: &serde_json::Value) -> Vec<LibraryEntry> {
@@ -50,20 +53,7 @@ fn resolve_libraries(json: &serde_json::Value) -> Vec<LibraryEntry> {
                 .and_then(|a| a.get("path"))
                 .and_then(|p| p.as_str())
                 .map(String::from)
-                .or_else(|| {
-                    let parts: Vec<&str> = name.splitn(3, ':').collect();
-                    if parts.len() < 3 {
-                        return None;
-                    }
-                    Some(format!(
-                        "{}/{}/{}/{}-{}.jar",
-                        parts[0].replace('.', "/"),
-                        parts[1],
-                        parts[2],
-                        parts[1],
-                        parts[2]
-                    ))
-                });
+                .or_else(|| crate::installer::maven_rel_path_str(name));
             if let Some(p) = path {
                 out.push(LibraryEntry { path: p });
             }
@@ -217,6 +207,7 @@ fn resolve_version(instance_dir: &Path, version_id: &str) -> Result<ResolvedVers
         }
     }
     let versions_dir = instance_dir.join("versions");
+    let mut asset_index = String::new();
     if let Some(base) = chain.last() {
         let base_id = base.get("id").and_then(|i| i.as_str()).unwrap_or(version_id);
         client_jar_path = versions_dir
@@ -224,6 +215,19 @@ fn resolve_version(instance_dir: &Path, version_id: &str) -> Result<ResolvedVers
             .join(format!("{base_id}.jar"))
             .to_string_lossy()
             .to_string();
+        asset_index = base
+            .get("assets")
+            .and_then(|a| a.as_str())
+            .map(String::from)
+            .unwrap_or_default();
+        if asset_index.is_empty() {
+            asset_index = base
+                .get("assetIndex")
+                .and_then(|ai| ai.get("id"))
+                .and_then(|id| id.as_str())
+                .map(String::from)
+                .unwrap_or_default();
+        }
     }
     if let Some(hijo) = chain.first() {
         let id = hijo.get("id").and_then(|i| i.as_str()).unwrap_or(version_id);
@@ -245,6 +249,7 @@ fn resolve_version(instance_dir: &Path, version_id: &str) -> Result<ResolvedVers
         game_args,
         client_jar_path,
         extra_jars,
+        asset_index,
     })
 }
 
@@ -252,7 +257,7 @@ fn build_classpath(resolved: &ResolvedVersion, instance_dir: &Path) -> String {
     let mut cp_paths = Vec::new();
     let libs_base = instance_dir.join("libraries");
     for lib in &resolved.libraries {
-        let full = libs_base.join(&lib.path);
+        let full = libs_base.join(Path::new(&lib.path));
         if full.exists() {
             cp_paths.push(full.to_string_lossy().to_string());
         }
@@ -352,7 +357,7 @@ fn build_launch_command(
             if cfg!(target_os = "windows") { ";" } else { ":" },
         );
         *arg = arg.replace("${library_directory}", &libraries_dir);
-        *arg = arg.replace("${assets_index_name}", &meta.game_version);
+        *arg = arg.replace("${assets_index_name}", &resolved.asset_index);
         *arg = arg.replace("${clientid}", "NexusLauncher");
         *arg = arg.replace("${auth_xuid}", "");
         *arg = arg.replace("${resolution_width}", "1280");
@@ -401,7 +406,316 @@ pub struct LogLine {
     pub line: String,
     pub stream: String, // stdout | stderr
 }
-pub fn launch_minecraft(
+
+/// Re-descarga los archivos de lanzamiento que falten (p. ej. si se eliminó algún archivo o la descarga quedó incompleta).
+async fn repair_launch_files(
+    instance_dir: &Path,
+    meta: &crate::instances::InstanceMeta,
+) -> Result<(), String> {
+    let mut noop = |_: u32, _: String| {};
+    let progress: &mut crate::installer::InstallProgress<'_> = &mut noop;
+    let loader = meta.loader.to_lowercase();
+    let mut loader_version = meta.loader_version.trim().to_string();
+    if loader_version.is_empty() {
+        if let Some(v) = meta.version_id.strip_prefix("fabric-loader-") {
+            if let Some(first_part) = v.split('-').next() {
+                loader_version = first_part.to_string();
+            }
+        }
+    }
+    // Asegurar juego base
+    crate::installer::install_game(instance_dir, &meta.game_version, progress)
+        .await
+        .map(|_| ())?;
+
+    if loader.contains("fabric") || loader.contains("quilt") {
+        let lv = if loader_version.is_empty() {
+            crate::installer::get_fabric_loaders()
+                .await
+                .ok()
+                .and_then(|list| list.into_iter().next())
+                .unwrap_or_default()
+        } else {
+            loader_version
+        };
+        if !lv.is_empty() {
+            crate::installer::install_fabric(
+                instance_dir,
+                &meta.game_version,
+                &lv,
+                progress,
+            )
+            .await
+            .map(|_| ())?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn log_launch(msg: &str) {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let line = format!("[{now}] [launch] {msg}");
+    println!("{line}");
+    let log_path = crate::config::launcher_log_file();
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// Comprueba que los archivos imprescindibles existen antes de invocar a Java.
+/// Sin esto, un jar ausente produce un ClassNotFoundException críptico en la consola.
+fn validate_launch_files(
+    app: &AppHandle,
+    instance_name: &str,
+    instance_dir: &Path,
+    version_id: &str,
+    loader: &str,
+    resolved: &ResolvedVersion,
+) -> Result<(), String> {
+    if resolved.main_class.trim().is_empty() {
+        log_launch(&format!(
+            "ERROR: '{instance_name}' sin clase principal (version_id='{version_id}')"
+        ));
+        return Err("No se pudo determinar la clase principal del juego: la instalación parece incompleta. Elimina la instancia e instálala de nuevo.".to_string());
+    }
+    let loader_lc = loader.to_lowercase();
+    let is_fabric_like = loader_lc.contains("fabric")
+        || loader_lc.contains("quilt")
+        || resolved.main_class.to_lowercase().contains("knot");
+
+    let is_forge_like = resolved.main_class.contains("bootstraplauncher")
+        || resolved.main_class.contains("modlauncher")
+        || resolved.id.to_lowercase().contains("forge");
+    if !is_forge_like
+        && !resolved.client_jar_path.is_empty()
+        && !Path::new(&resolved.client_jar_path).exists()
+    {
+        log_launch(&format!(
+            "ERROR: '{instance_name}' sin client jar (falta {})",
+            resolved.client_jar_path
+        ));
+        return Err("Falta el archivo principal de Minecraft (client jar): la instalación quedó incompleta. Elimina la instancia e instálala de nuevo.".to_string());
+    }
+    let libs_base = instance_dir.join("libraries");
+    let missing: Vec<&str> = resolved
+        .libraries
+        .iter()
+        .filter(|lib| !libs_base.join(Path::new(&lib.path)).exists())
+        .map(|lib| lib.path.as_str())
+        .collect();
+
+    if is_fabric_like {
+        let missing_loader = missing
+            .iter()
+            .find(|p| p.contains("fabric-loader") || p.contains("quilt-loader"));
+        if let Some(loader_rel) = missing_loader {
+            let full = libs_base.join(Path::new(loader_rel));
+            log_launch(&format!(
+                "ERROR: '{instance_name}' sin librería del loader fabric (falta {})",
+                full.to_string_lossy()
+            ));
+            return Err(format!(
+                "Falta el archivo del loader fabric ({}): la descarga quedó incompleta.",
+                full.to_string_lossy()
+            ));
+        }
+    }
+    if !missing.is_empty() {
+        log_launch(&format!(
+            "AVISO: '{instance_name}' tiene {} librerías sin descargar, ej: {}",
+            missing.len(),
+            missing.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+        ));
+        let _ = app.emit(
+            "launch/line",
+            LogLine {
+                line: format!(
+                    "[aviso] Faltan {} librerías por descargar; si el juego falla, elimina la instancia e instálala de nuevo.",
+                    missing.len()
+                ),
+                stream: "stderr".to_string(),
+            },
+        );
+    }
+    log_launch(&format!(
+        "lanzando '{instance_name}' version_id='{version_id}' main='{}' libs={} faltan={}",
+        resolved.main_class,
+        resolved.libraries.len(),
+        missing.len()
+    ));
+    Ok(())
+}
+
+fn collect_rel_paths(folder: &Path, out: &mut Vec<(String, std::path::PathBuf)>) {
+    if !folder.is_dir() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(folder) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                collect_rel_paths(&p, out);
+            } else {
+                if let Some(rel) = p.strip_prefix(folder).ok() {
+                    out.push((rel.to_string_lossy().into_owned(), p));
+                }
+            }
+        }
+    }
+}
+
+fn merge_journeymap_servers(instance_dir: &Path) {
+    let mp = instance_dir.join("journeymap").join("data").join("mp");
+    if !mp.is_dir() {
+        return;
+    }
+    let mut groups: std::collections::HashMap<String, Vec<std::path::PathBuf>> =
+        std::collections::HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(&mp) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let uuid = name.rsplit('_').next().unwrap_or(&name).to_string();
+            groups.entry(uuid).or_default().push(p);
+        }
+    }
+    let mut total_copied = 0u64;
+    for (_uuid, folders) in groups.into_iter() {
+        if folders.is_empty() {
+            continue;
+        }
+        // Unión de rutas relativas -> una carpeta origen que las tenga.
+        let mut union: std::collections::HashMap<String, std::path::PathBuf> =
+            std::collections::HashMap::new();
+        for folder in &folders {
+            let mut rels = Vec::new();
+            collect_rel_paths(folder, &mut rels);
+            for (rel, abs) in rels {
+                union.entry(rel).or_insert(abs);
+            }
+        }
+        // Cada carpeta del grupo (incluida una nueva por cambio de IP) recibe la unión completa.
+        for folder in &folders {
+            let mut copied = 0u64;
+            for (rel, src) in &union {
+                let dst = folder.join(rel);
+                if !dst.exists() {
+                    if let Some(parent) = dst.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    match std::fs::copy(src, &dst) {
+                        Ok(_) => copied += 1,
+                        Err(e) => log_launch(&format!("journeymap: no se pudo copiar {rel}: {e}")),
+                    }
+                }
+            }
+            total_copied += copied;
+        }
+        if total_copied > 0 || folders.len() > 1 {
+            log_launch(&format!(
+                "journeymap: sincronizadas {} carpetas del servidor, +{} archivos copiados",
+                folders.len(),
+                total_copied
+            ));
+        }
+    }
+}
+
+fn ensure_default_resourcepacks(instance_dir: &Path) {
+    let mut names: Vec<String> = crate::sync::load_manifest_cache(instance_dir)
+        .map(|m| m.default_resourcepacks)
+        .unwrap_or_default();
+    if names.is_empty() {
+        names = crate::config::DEFAULT_RESOURCE_PACKS.iter().map(|s| s.to_string()).collect();
+    }
+    let packs_dir = instance_dir.join("resourcepacks");
+    let mut wanted: Vec<String> = Vec::new();
+    for raw in names {
+        let raw = raw.trim().to_string();
+        if raw.is_empty() {
+            continue;
+        }
+        let entry = if raw.starts_with("file/") || raw == "vanilla" || raw.contains(':') {
+            raw.clone()
+        } else {
+            format!("file/{raw}")
+        };
+        let rel = entry.strip_prefix("file/").unwrap_or(&entry);
+        if packs_dir.join(rel).exists() {
+            wanted.push(entry);
+        }
+    }
+    if wanted.is_empty() {
+        return;
+    }
+    let options_path = instance_dir.join("options.txt");
+    let existing = fs::read_to_string(&options_path).unwrap_or_default();
+    let eol = if existing.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut lines: Vec<String> = existing.lines().map(|l| l.trim_end().to_string()).collect();
+
+    let mut packs: Vec<String> = Vec::new();
+    let mut packs_idx: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(rest) = line.strip_prefix("resourcePacks:") {
+            packs = serde_json::from_str::<Vec<String>>(rest.trim()).unwrap_or_default();
+            packs_idx = Some(i);
+            break;
+        }
+    }
+    if packs.is_empty() {
+        packs.push("vanilla".to_string());
+    }
+    let mut changed = false;
+    for w in &wanted {
+        if !packs.contains(w) {
+            packs.push(w.clone());
+            changed = true;
+        }
+    }
+    let pack_line = format!("resourcePacks:{}", serde_json::to_string(&packs).unwrap_or_default());
+    match packs_idx {
+        Some(i) => {
+            if lines[i] != pack_line {
+                lines[i] = pack_line;
+                changed = true;
+            }
+        }
+        None => {
+            lines.push(pack_line);
+            changed = true;
+        }
+    }
+    for line in lines.iter_mut() {
+        if let Some(rest) = line.strip_prefix("incompatibleResourcePacks:") {
+            if let Ok(mut inc) = serde_json::from_str::<Vec<String>>(rest.trim()) {
+                let before = inc.len();
+                inc.retain(|p| !wanted.contains(p));
+                if inc.len() != before {
+                    *line = format!(
+                        "incompatibleResourcePacks:{}",
+                        serde_json::to_string(&inc).unwrap_or_default()
+                    );
+                    changed = true;
+                }
+            }
+        }
+    }
+    if !changed {
+        return;
+    }
+    let mut out = lines.join(eol);
+    out.push_str(eol);
+    if let Err(e) = fs::write(&options_path, out) {
+        log_launch(&format!("no se pudo activar el texture pack por defecto: {e}"));
+    } else {
+        log_launch(&format!("texture pack por defecto activado: {}", wanted.join(", ")));
+    }
+}
+
+pub async fn launch_minecraft(
     app: AppHandle,
     instance_name: &str,
     java_path: &str,
@@ -420,8 +734,46 @@ pub fn launch_minecraft(
             .unwrap_or_else(|| meta.game_version.clone())
     };
 
-    let resolved = resolve_version(&instance_dir, &version_id)?;
-    let (ram_min_mb, ram_max_mb) = crate::jvm::effective_max_ram(&instance_dir);
+    let mut resolved = resolve_version(&instance_dir, &version_id)?;
+    if let Err(first_err) = validate_launch_files(
+        &app,
+        instance_name,
+        &instance_dir,
+        &version_id,
+        &meta.loader,
+        &resolved,
+    ) {
+        // Auto-reparación: descarga lo que falte y reintenta una sola vez.
+        let _ = app.emit(
+            "launch/line",
+            LogLine {
+                line: "[info] Faltan archivos de la instalación, descargando faltantes..."
+                    .to_string(),
+                stream: "stdout".to_string(),
+            },
+        );
+        log_launch(&format!("reparando '{instance_name}' tras: {first_err}"));
+        match repair_launch_files(&instance_dir, &meta).await {
+            Ok(()) => {
+                resolved = resolve_version(&instance_dir, &version_id)?;
+                validate_launch_files(
+                    &app,
+                    instance_name,
+                    &instance_dir,
+                    &version_id,
+                    &meta.loader,
+                    &resolved,
+                )?;
+            }
+            Err(e) => {
+                log_launch(&format!("reparación fallida de '{instance_name}': {e}"));
+                return Err(first_err);
+            }
+        }
+    }
+        ensure_default_resourcepacks(&instance_dir);
+        merge_journeymap_servers(&instance_dir);
+        let (ram_min_mb, ram_max_mb) = crate::jvm::effective_max_ram(&instance_dir);
     let command = build_launch_command(
         java_path,
         &resolved,
@@ -467,6 +819,7 @@ pub fn launch_minecraft(
         use std::io::BufRead;
         let reader = std::io::BufReader::new(stdout);
         let app2 = app.clone();
+        let instance_dir2 = instance_dir.clone();
         std::thread::spawn(move || {
             for line in reader.lines().flatten() {
                 let _ = app2.emit(
@@ -481,6 +834,8 @@ pub fn launch_minecraft(
                 );
             }
             let _ = app2.emit("launch/exit", pid);
+            ensure_default_resourcepacks(&instance_dir2);
+            merge_journeymap_servers(&instance_dir2);
             crate::antilag::stop_tunnel();
             crate::discord::set_launcher_idle();
         });

@@ -3,10 +3,17 @@ const DEMO = !window.__TAURI__;
 const $ = (id) => document.getElementById(id);
 const status = (id, msg) => { $(id).textContent = msg || ""; };
 const demoStore = { accounts: [], selected_id: "", mode: "offline", offline_username: "Juanito67" };
+const demoWhitelist = { owner: "4b2e6d4e1a454ffdab9c492b3f26e44f", staff: [{ name: "Admin", uuid: "demo-uuid-admin-0000-0000" }], access: [{ name: "Jugador", uuid: "demo-uuid-player-0000-000", instances: ["*"] }], current_uuid: "", current_name: "", is_owner: false, is_staff: false, allowed_instances: ["*"], can_admin: false };
+let wl = null;
+let currentUuid = "";
+let isAdmin = false;
+let isOwner = false;
+let userAccessInstances = null; // null = todas, [] = ninguna, array = lista
+let gateReady = false;
 const demoInstances = [
-  { name: "Vanilla 1.21.4", version_id: "1.21.4", loader: "vanilla", game_version: "1.21.4", loader_version: "", source: "local", manifest_url: "", manifest_type: "", server_version: "", actualizacion: true, installed: true, instance_dir: "C:\\Documentos\\NexusLauncher\\instancias\\Vanilla 1.21.4", last_launched: "2026-09-14 18:00", session_based: false, remote: false },
-  { name: "Server de Kaz", version_id: "1.21.4-fabric-0.16.14", loader: "fabric", game_version: "1.21.4", loader_version: "0.16.14", source: "remote", manifest_url: "https://drive.google.com/uc?export=download&id=abc123", manifest_type: "pau", server_version: "2026-09-13", actualizacion: true, installed: true, instance_dir: "C:\\Documentos\\NexusLauncher\\instancias\\Server de Kaz", last_launched: "2026-09-13 21:30", session_based: false, remote: true },
-  { name: "Pack de Test", version_id: "", loader: "fabric", game_version: "1.20.1", loader_version: "", source: "remote", manifest_url: "https://drive.google.com/uc?export=download&id=xyz789", manifest_type: "", server_version: "", actualizacion: true, installed: false, instance_dir: "C:\\Documentos\\NexusLauncher\\instancias\\Pack de Test", last_launched: "", session_based: false },
+  { name: "Vanilla 1.21.4", version_id: "1.21.4", loader: "vanilla", game_version: "1.21.4", loader_version: "", source: "local", manifest_url: "", manifest_type: "", server_version: "", actualizacion: true, installed: true, instance_dir: "C:\\Documentos\\NexusLauncher\\instancias\\Vanilla 1.21.4", last_launched: "2026-09-14 18:00", session_based: false, remote: false, github_repo: "", github_branch: "", github_path: "" },
+  { name: "Server de Kaz", version_id: "1.21.4-fabric-0.16.14", loader: "fabric", game_version: "1.21.4", loader_version: "0.16.14", source: "remote", manifest_url: "https://drive.google.com/uc?export=download&id=abc123", manifest_type: "pau", server_version: "2026-09-13", actualizacion: true, installed: true, instance_dir: "C:\\Documentos\\NexusLauncher\\instancias\\Server de Kaz", last_launched: "2026-09-13 21:30", session_based: false, remote: true, github_repo: "kazdev97/Nexusmodpacks", github_branch: "main", github_path: "pack" },
+  { name: "Pack de Test", version_id: "", loader: "fabric", game_version: "1.20.1", loader_version: "", source: "remote", manifest_url: "https://drive.google.com/uc?export=download&id=xyz789", manifest_type: "", server_version: "", actualizacion: true, installed: false, instance_dir: "C:\\Documentos\\NexusLauncher\\instancias\\Pack de Test", last_launched: "", session_based: false, remote: true, github_repo: "", github_branch: "", github_path: "" },
 ];
 const demoJava = [
   { path: "C:\\Documentos\\NexusLauncher\\runtime\\jdk-21\\bin\\java.exe", major: 21, is_valid: true },
@@ -16,11 +23,10 @@ const demoVersions = [
   { id: "1.21.4", kind: "release", release_time: "2024-12-03T18:21:00+00:00" },
   { id: "1.20.1", kind: "release", release_time: "2023-06-12T12:11:00+00:00" },
 ];
-const demoSettings = { ram_mb: 4096, max_ram_mb: 0, java_path_override: "", streamer_mode: true, close_launcher_after_launch: false, game_res_width: 0, game_res_height: 0, fullscreen: false, last_username: "", source_url: "https://raw.githubusercontent.com/kazdev97/Nexusmodpacks/main/index.json", auto_update: true };
+const demoSettings = { ram_mb: 4096, max_ram_mb: 0, java_path_override: "", streamer_mode: true, close_launcher_after_launch: false, game_res_width: 0, game_res_height: 0, fullscreen: false, last_username: "", source_url: "https://raw.githubusercontent.com/kazdev97/Hallogeey/main/index.json", auto_update: true };
 const demoSource = [
-  { id: "paucalipsis", name: "Paucalipsis 2", description: "Carpeta del pack en la repo (sync directo de GitHub)", game_version: "1.21.4", loader: "fabric", loader_version: "0.16.14", manifest_url: "", revision: "latest", installed: true, github_repo: "kazdev97/Nexusmodpacks", github_path: "pack", github_branch: "main" },
-  { id: "escuela", name: "Escuela 2026", description: "Pack educativo ligero para el aula", game_version: "1.20.1", loader: "fabric", loader_version: "0.16.10", manifest_url: "https://raw.githubusercontent.com/pau/mis-packs/main/escuela/manifest.json", revision: "2026-09-01", installed: false },
-  { id: "evento", name: "Evento Hallowen 2026", description: "Modpack temporal del evento", game_version: "1.21.4", loader: "vanilla", loader_version: "", manifest_url: "https://raw.githubusercontent.com/pau/mis-packs/main/evento/manifest.json", revision: "2026-09-13", installed: false },
+  { id: "navigay", name: "NaviGay", description: "Pack oficial Ataplaygame", game_version: "1.21.11", loader: "fabric", loader_version: "0.19.5", manifest_url: "https://raw.githubusercontent.com/kazdev97/Hallogeey/main/manifest.json", revision: "2026110646847165", installed: false, github_repo: "kazdev97/Hallogeey", github_path: "files", github_branch: "main" },
+  { id: "paucalipsis-2", name: "Paucalipsis 2", description: "Modpack de Paucalipsis 2", game_version: "1.20.1", loader: "forge", loader_version: "47.4.10", manifest_url: "", revision: "latest", installed: false, github_repo: "kazdev97/Paucalipsis-2", github_path: "pack", github_branch: "main" },
 ];
 const demoDiff = { revision: "20260914T120000Z", up_to_date: false, missing: ["mods/jei-1.21.4.jar", "config/server.properties"], different: ["mods/usefulmod.jar"], extra: ["mods/lag_fix.jar", "config/old_setting.toml"], change_count: 5, has_archive: true };
 const demoSyncResult = { applied_revision: "20260914T120000Z", replaced: ["mods/usefulmod.jar"], downloaded: ["mods/jei-1.21.4.jar", "config/server.properties"], removed: ["mods/lag_fix.jar"], backup_dir: "C:\\Documentos\\NexusLauncher\\instancias\\Server de Kaz\\backups\\20260914T120000Z", errors: [] };
@@ -28,9 +34,17 @@ const demoSyncResult = { applied_revision: "20260914T120000Z", replaced: ["mods/
 function demoCall(cmd) {
   const map = {
     login_get_state: () => demoStore,
-    login_set_offline: () => undefined,
+    login_start: () => ({ id: "demo-uuid-player-0000-000", name: "JugadorDemo", needs_relogin: false }),
+    login_set_offline: () => { throw new Error("Modo offline deshabilitado por política del servidor."); },
     login_set_selected: () => undefined,
-    login_remove_account: () => undefined,
+    login_remove_account: () => { demoStore.accounts = []; demoStore.selected_id = ""; return undefined; },
+    whitelist_get: () => demoWhitelist,
+    whitelist_set_owner: () => demoWhitelist,
+    whitelist_add_access: () => demoWhitelist,
+    whitelist_remove_access: () => demoWhitelist,
+    whitelist_add_staff: () => demoWhitelist,
+    whitelist_remove_staff: () => demoWhitelist,
+    uuid_lookup: () => ({ uuid: "12345678-1234-1234-1234-1234567890ab", name: "JugadorDemo" }),
     instances_list: () => demoInstances,
     java_get_bundled: () => demoJava.filter((j) => j.path.toLowerCase().includes("runtime")),
     java_get_system: () => demoJava.filter((j) => !j.path.toLowerCase().includes("runtime")),
@@ -44,6 +58,8 @@ function demoCall(cmd) {
     ram_recommend: () => ({ total_ram_gb: 32, min_mb: 1536, max_mb: 8192 }),
     source_fetch: () => demoSource,
     source_install: () => undefined,
+    instances_create: () => undefined,
+    sync_all: () => ({ updated: demoInstances.map(i => i.name), checked: demoInstances.length, errors: [] }),
     auto_sync_check: () => [
       { name: "Server de Kaz", up_to_date: false, change_count: 5, revision: "20260914T120000Z", error: null },
       { name: "Vanilla 1.21.4", up_to_date: true, change_count: 0, revision: "", error: null },
@@ -54,6 +70,16 @@ function demoCall(cmd) {
     launch_is_running: () => false,
     update_check: () => ({ current: "0.1.0", latest: "0.2.0", available: true, notes: "Mejoras de compatibilidad", download_url: "" }),
     update_apply: () => undefined,
+    publisher_set_token: () => undefined,
+    publisher_get_status: () => true,
+    pick_folder: () => "C:\\Users\\Kaz\\AppData\\Roaming\\.minecraft",
+    open_folder: () => undefined,
+    instance_get_local_dir: (args) => `E:\\LAUNCHER NEXUS\\LAUNCHER NEXUS\\instances\\${args?.name || 'Navigay'}`,
+    instance_list_publish_folders: () => ["config", "mods", "resourcepacks", "shaderpacks", "scripts"],
+    instance_set_github_repo: () => undefined,
+    instance_publish: () => "demo0000000000000000000000000000000",
+    publisher_publish: () => "demo0000000000000000000000000000000",
+    whitelist_sync_github: () => "Whitelist sincronizada en GitHub (modo demo).",
   };
   const fn = map[cmd];
   return Promise.resolve(fn ? fn() : undefined);
@@ -121,35 +147,146 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
     document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
     $("page-" + btn.dataset.page).classList.add("active");
-    if (btn.dataset.page === "instances") loadSource();
-    if (btn.dataset.page === "settings") { loadSettings(); setupRam(); fillRollbackForm(); loadAntilag(); }
+    if (btn.dataset.page === "instances") {
+      loadWhitelist().then(() => {
+        loadInstances();
+        loadSource();
+      }).catch(() => {
+        loadInstances();
+        loadSource();
+      });
+    }
+    if (btn.dataset.page === "admin") { loadWhitelistUI(); loadPublishUI(); }
+    if (btn.dataset.page === "settings") { loadSettings(); setupRam(); fillRollbackForm(); loadAntilag(); loadTokenStatus(); }
     call("discord_set_page", { page: btn.dataset.page }).catch(() => {});
   });
 });
+function showGate(msg) {
+  const gate = $("login-gate");
+  const app = $("app-shell");
+  if (gate) gate.classList.remove("hidden");
+  if (app) app.classList.add("hidden");
+  if (msg) status("login-status", msg);
+}
+function hideGate() {
+  const gate = $("login-gate");
+  const app = $("app-shell");
+  if (gate) gate.classList.add("hidden");
+  if (app) app.classList.remove("hidden");
+}
+function normUuid(u) {
+  return (u || "").toLowerCase().replace(/-/g, "").trim();
+}
+async function loadWhitelist() {
+  try {
+    wl = await call("whitelist_get", {});
+  } catch (e) {
+    wl = null;
+  }
+  computeAccess();
+  updateAccessUI();
+  if (isAdmin) loadWhitelistUI();
+}
+function computeAccess() {
+  isAdmin = false;
+  isOwner = false;
+  userAccessInstances = null;
+  if (!wl) return;
+  const me = normUuid(currentUuid);
+  if (!me) return;
+  const ownerUuid = normUuid(wl.owner && (wl.owner.uuid || wl.owner));
+  if (ownerUuid && me === ownerUuid) { isAdmin = true; isOwner = true; return; }
+  const staff = wl.staff || [];
+  for (const s of staff) {
+    if (normUuid(s.uuid) === me) { isAdmin = true; return; }
+  }
+  const acc = wl.access || [];
+  for (const a of acc) {
+    if (normUuid(a.uuid) === me) {
+      const list = a.instances || [];
+      if (list.includes("*") || list.includes("Todas")) userAccessInstances = null;
+      else userAccessInstances = list.slice();
+      return;
+    }
+  }
+  userAccessInstances = [];
+}
+function canAccessInstance(name) {
+  if (isAdmin) return true;
+  if (userAccessInstances === null) return true;
+  if (!userAccessInstances.length) return false;
+  if (userAccessInstances.includes("*")) return true;
+  const n = (name || "").toLowerCase().trim();
+  return userAccessInstances.some((x) => {
+    const nx = (x || "").toLowerCase().trim();
+    if (nx === n) return true;
+    if ((nx === "hallogeey" || nx === "navigay") && (n === "hallogeey" || n === "navigay")) return true;
+    return false;
+  });
+}
+function updateAccessUI() {
+  const navAdmin = $("nav-admin");
+  if (navAdmin) navAdmin.classList.toggle("hidden", !isAdmin);
+  // Publicar y guardar token son solo del propietario.
+  const cardPublish = $("card-publish");
+  if (cardPublish) cardPublish.classList.toggle("hidden", !isOwner);
+  const cardToken = $("card-token");
+  if (cardToken) cardToken.classList.toggle("hidden", !isOwner);
+  const badge = $("access-badge");
+  if (badge) {
+    if (!currentUuid) badge.classList.add("hidden");
+    else {
+      badge.classList.remove("hidden");
+      badge.textContent = isAdmin ? "ADMIN" : (userAccessInstances === null ? "ACCESO TOTAL" : (userAccessInstances.length ? "WHITELIST: " + userAccessInstances.length : "SIN ACCESO"));
+    }
+  }
+  const noAccess = $("no-access");
+  if (noAccess) {
+    const show = !!currentUuid && !isAdmin && userAccessInstances !== null && userAccessInstances.length === 0;
+    noAccess.classList.toggle("hidden", !show);
+    const uuidEl = $("no-access-uuid");
+    if (uuidEl && show) uuidEl.textContent = currentUuid;
+  }
+  applyLauncherTheme();
+}
+async function doMicrosoftLogin() {
+  status("login-status", "Iniciando sesión... Complete el login en el navegador.");
+  status("login-status-2", "Iniciando sesión... Complete el login en el navegador.");
+  try {
+    const acc = await call("login_start", {});
+    status("login-status", "Sesión iniciada como " + (acc.name || acc.id));
+    status("login-status-2", "Sesión iniciada como " + (acc.name || acc.id));
+    gateReady = true;
+    await refreshLogin();
+    loadInstances();
+  } catch (e) {
+    const m = (e.message || e) === "__MINECRAFT_NOT_OWNED__"
+      ? "Esta cuenta de Microsoft no tiene Minecraft comprado."
+      : "Login cancelado o fallido: " + e.message;
+    status("login-status", m);
+    status("login-status-2", m);
+  }
+}
 async function refreshLogin() {
   try {
     const store = await call("login_get_state", {});
-    const offlineName = (store.mode === "offline" && (store.offline_username || "").trim())
-      || "";
-    const offlineToggle = $("offline-mode");
-    if (offlineToggle) offlineToggle.checked = !!offlineName;
-    if (offlineName) $("offline-username").value = store.offline_username;
-
-    if (offlineName) {
-      $("nav-user").textContent = offlineName + " (no premium)";
+    const hasOffline = store.mode === "offline" && (store.offline_username || "").trim();
+    if (hasOffline) {
+      showGate("Modo offline deshabilitado. Se requiere cuenta premium de Microsoft.");
+      if ($("login-box")) $("login-box").classList.remove("hidden");
+      if ($("login-ok")) $("login-ok").classList.add("hidden");
+      $("nav-user").textContent = "Sin sesión";
       const navAvatar = $("nav-user-avatar");
       if (navAvatar) navAvatar.classList.add("hidden");
-      $("login-box").classList.remove("hidden");
-      $("login-ok").classList.add("hidden");
-      status("login-status", "");
+      currentUuid = "";
+      await loadWhitelist().catch(() => {});
       return;
     }
-
     if (store.accounts && store.accounts.length > 0) {
       const sel = store.accounts.find((a) => a.id === store.selected_id) || store.accounts[0];
       const username = sel.name || sel.id;
       const uuid = sel.id || "";
-
+      currentUuid = uuid;
       $("login-name").textContent = username;
       if ($("login-uuid")) $("login-uuid").textContent = uuid;
       const needsRelogin = !!sel.needs_relogin;
@@ -189,16 +326,25 @@ async function refreshLogin() {
           navAvatar.src = `https://minotar.net/helm/${encodeURIComponent(username)}/64`;
         };
       }
-
-      $("login-box").classList.add("hidden");
-      $("login-ok").classList.remove("hidden");
-    } else {
-      $("login-box").classList.remove("hidden");
-      $("login-ok").classList.add("hidden");
-      $("nav-user").textContent = "Sin sesión";
-      const navAvatar = $("nav-user-avatar");
-      if (navAvatar) navAvatar.classList.add("hidden");
+      if ($("login-box")) $("login-box").classList.add("hidden");
+      if ($("login-ok")) $("login-ok").classList.remove("hidden");
+      if (!needsRelogin) {
+        hideGate();
+        gateReady = true;
+      } else {
+        showGate("Sesión cerrada. Vuelve a iniciar sesión.");
+      }
+      await loadWhitelist();
+      return;
     }
+    currentUuid = "";
+    showGate();
+    if ($("login-box")) $("login-box").classList.remove("hidden");
+    if ($("login-ok")) $("login-ok").classList.add("hidden");
+    $("nav-user").textContent = "Sin sesión";
+    const navAvatar = $("nav-user-avatar");
+    if (navAvatar) navAvatar.classList.add("hidden");
+    await loadWhitelist().catch(() => {});
   } catch (e) {
     status("login-status", "Error al leer cuentas: " + e.message);
   }
@@ -212,78 +358,528 @@ if (navUserContainer) {
   });
 }
 
-$("btn-login").addEventListener("click", async () => {
-  status("login-status", "Iniciando sesión... Complete el login en el navegador.");
-  try {
-    const acc = await call("login_start", {});
-    status("login-status", "Sesión iniciada como " + (acc.name || acc.id));
-    refreshLogin();
-  } catch (e) {
-    status("login-status", (e.message || e) === "__MINECRAFT_NOT_OWNED__"
-      ? "Esta cuenta de Microsoft no tiene Minecraft comprado."
-      : "Login cancelado o fallido: " + e.message);
-  }
-});
-
-$("btn-relogin").addEventListener("click", async () => {
+if ($("btn-login")) $("btn-login").addEventListener("click", doMicrosoftLogin);
+if ($("btn-login-2")) $("btn-login-2").addEventListener("click", doMicrosoftLogin);
+if ($("btn-relogin")) $("btn-relogin").addEventListener("click", async () => {
   status("login-status", "Reiniciando sesión... Complete el login en el navegador si se abre.");
+  status("login-status-2", "Reiniciando sesión... Complete el login en el navegador si se abre.");
   try {
     const acc = await call("login_start", {});
     status("login-status", "Sesión renovada como " + (acc.name || acc.id));
-    refreshLogin();
+    await refreshLogin();
   } catch (e) {
-    status("login-status", (e.message || e) === "__MINECRAFT_NOT_OWNED__"
+    const m = (e.message || e) === "__MINECRAFT_NOT_OWNED__"
       ? "Esta cuenta de Microsoft no tiene Minecraft comprado."
-      : "Relogin cancelado o fallido: " + e.message);
+      : "Relogin cancelado o fallido: " + e.message;
+    status("login-status", m);
+    status("login-status-2", m);
   }
 });
-
-$("btn-logout").addEventListener("click", async () => {
+if ($("btn-logout")) $("btn-logout").addEventListener("click", async () => {
   try {
     const store = await call("login_get_state", {});
     if (store.selected_id) await call("login_remove_account", { accountId: store.selected_id });
-    refreshLogin();
+    currentUuid = "";
+    gateReady = false;
+    await refreshLogin();
   } catch (e) { status("login-status", e.message); }
 });
-$("btn-save-offline").addEventListener("click", async () => {
-  const name = $("offline-username").value.trim();
-  if (!name) { status("offline-status", "Escribe un nombre de usuario."); return; }
-  try {
-    await call("login_set_offline", { username: name });
-    status("offline-status", `Modo No premium activo como '${name}'.`);
-    refreshLogin();
-  } catch (e) { status("offline-status", e.message); }
+const offlineSaveBtn = $("btn-save-offline");
+if (offlineSaveBtn) offlineSaveBtn.addEventListener("click", async () => {
+  status("offline-status", "Modo offline deshabilitado por política del servidor.");
 });
+const offlineToggle = $("offline-mode");
+if (offlineToggle) offlineToggle.addEventListener("change", () => {
+  offlineToggle.checked = false;
+  status("offline-status", "Modo offline deshabilitado por política del servidor.");
+});
+// ─── ADMIN / WHITELIST UI ───
+// ─── Temas por instancia (Ataplaygame / DoctoraPaula rosa-morado / Nexus base) ───
+const THEME_LABELS = { cyber: "Nexus Base", ataplay: "Ataplaygame", paula: "DoctoraPaula" };
+function getThemeOverrides() {
+  try { return JSON.parse(localStorage.getItem("nexus_instance_themes") || "{}"); }
+  catch (e) { return {}; }
+}
+function setThemeOverride(name, theme) {
+  const map = getThemeOverrides();
+  if (!theme || theme === "auto") delete map[name];
+  else map[name] = theme;
+  try { localStorage.setItem("nexus_instance_themes", JSON.stringify(map)); } catch (e) {}
+}
+function detectTheme(name) {
+  const map = getThemeOverrides();
+  if (map[name]) return map[name];
+  const n = (name || "").toLowerCase();
+  if (n.includes("ataplay") || n.includes("hallogeey") || n.includes("navigay")) return "ataplay";
+  if (n.includes("paula") || n.includes("paucalipsis")) return "paula";
+  return "cyber";
+}
+function themeChip(name) {
+  const t = detectTheme(name);
+  if (t === "cyber") return "";
+  return `<span class="theme-chip theme-${t}">${escapeHtml(THEME_LABELS[t])}</span>`;
+}
+// Tema global del launcher: tiñe TODA la UI según la instancia permitida.
+// Usuarios normales: forzado por su acceso. Staff: selector manual + automático.
+let activeInstanceTheme = "";
+let playingInstance = "";
 
-$("offline-mode").addEventListener("change", async () => {
-  if ($("offline-mode").checked) {
-    const name = $("offline-username").value.trim();
-    if (!name) {
-      $("offline-mode").checked = false;
-      status("offline-status", "Escribe un nombre de usuario primero.");
+function getStaffThemePref() {
+  return localStorage.getItem("nexus_staff_theme") || "auto";
+}
+function setStaffThemePref(v) {
+  try { localStorage.setItem("nexus_staff_theme", v); } catch (e) {}
+}
+
+function userOnlyHasAtaplayAccess() {
+  if (isAdmin) return false;
+  if (userAccessInstances === null) return false; // null = acceso a todas (*)
+  if (!Array.isArray(userAccessInstances) || userAccessInstances.length === 0) return false;
+  const allowedThemes = [...new Set(userAccessInstances.map((n) => detectTheme(n)))];
+  return allowedThemes.length === 1 && allowedThemes[0] === "ataplay";
+}
+
+function decideLauncherTheme() {
+  // 1. Si se está jugando esa instancia (NaviGay / Ataplaygame): aplica siempre (staff y usuarios)
+  if (playingInstance) {
+    const playTheme = detectTheme(playingInstance);
+    if (playTheme === "ataplay") return "ataplay";
+    if (playTheme && playTheme !== "cyber") return playTheme;
+  }
+
+  // 2. Si es staff / admin:
+  if (isAdmin) {
+    const pref = getStaffThemePref();
+    if (pref && pref !== "auto") return pref;
+    return "cyber";
+  }
+
+  // 3. Si como usuario normal solo tiene acceso a esa instancia:
+  if (userOnlyHasAtaplayAccess()) {
+    return "ataplay";
+  }
+
+  // 4. Si como usuario normal solo tiene acceso a otra instancia temática específica:
+  if (Array.isArray(userAccessInstances) && userAccessInstances.length > 0) {
+    const allowedThemes = [...new Set(userAccessInstances.map((n) => detectTheme(n)))];
+    if (allowedThemes.length === 1 && allowedThemes[0] !== "cyber") return allowedThemes[0];
+  }
+
+  return "cyber";
+}
+function applyLauncherTheme() {
+  const t = decideLauncherTheme();
+  document.body.dataset.launcherTheme = t;
+  const sel = $("launcher-theme-select");
+  if (sel) sel.value = isAdmin ? getStaffThemePref() : "auto";
+  return t;
+}
+function setActiveInstance(inst) {
+  activeInstanceTheme = inst && inst.name ? inst.name : "";
+  return applyLauncherTheme();
+}
+async function loadThemeUI() {
+  const list = $("theme-list");
+  if (!list) return;
+  const map = getThemeOverrides();
+  list.innerHTML = "";
+  const source = instances.length ? instances : [];
+  if (!source.length) { list.innerHTML = '<p class="muted">Sin instancias. Crea una primero.</p>'; return; }
+  source.forEach((inst) => {
+    const row = document.createElement("div");
+    row.className = "instance-card";
+    const t = detectTheme(inst.name);
+    row.innerHTML = `<div class="icon">${escapeHtml((inst.name || "?").charAt(0).toUpperCase())}</div><div class="info"><b>${escapeHtml(inst.name)}</b><div class="sub">Tema activo: ${escapeHtml(THEME_LABELS[t])}</div></div><div class="actions"><select data-theme-sel="${escapeHtml(inst.name)}" class="theme-sel">
+      <option value="auto" ${!map[inst.name] ? "selected" : ""}>Automático</option>
+      <option value="cyber" ${map[inst.name] === "cyber" ? "selected" : ""}>Blanco y negro (base)</option>
+      <option value="ataplay" ${map[inst.name] === "ataplay" ? "selected" : ""}>Ataplaygame</option>
+      <option value="paula" ${map[inst.name] === "paula" ? "selected" : ""}>DoctoraPaula</option>
+    </select></div>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll("[data-theme-sel]").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      setThemeOverride(sel.getAttribute("data-theme-sel"), sel.value);
+      status("theme-status", `Tema de '${sel.getAttribute("data-theme-sel")}' actualizado.`);
+      loadInstances();
+      loadThemeUI();
+    });
+  });
+}
+async function loadWhitelistUI() {
+  if (!wl) await loadWhitelist();
+  if (!wl) return;
+  // Staff
+  const staffList = $("staff-list");
+  if (staffList) {
+    staffList.innerHTML = "";
+    (wl.staff || []).forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "instance-card";
+      row.innerHTML = `<div class="icon">${escapeHtml((s.name || "?").charAt(0).toUpperCase())}</div><div class="info"><b>${escapeHtml(s.name)}</b><div class="sub">${escapeHtml(s.uuid)}</div></div><div class="actions"><button class="btn danger small" data-del>Quitar</button></div>`;
+      row.querySelector("[data-del]").addEventListener("click", async () => {
+        try { await call("whitelist_remove_staff", { uuid: s.uuid }); await loadWhitelist(); loadWhitelistUI(); status("staff-status", "Staff eliminado."); }
+        catch (e) { status("staff-status", e.message); }
+      });
+      staffList.appendChild(row);
+    });
+    if (!(wl.staff || []).length) staffList.innerHTML = '<p class="muted">Sin staff.</p>';
+  }
+  // Access
+  const accList = $("access-list");
+  if (accList) {
+    accList.innerHTML = "";
+    (wl.access || []).forEach((a) => {
+      const row = document.createElement("div");
+      row.className = "instance-card";
+      row.innerHTML = `<div class="icon">${escapeHtml((a.name || "?").charAt(0).toUpperCase())}</div><div class="info"><b>${escapeHtml(a.name)}</b><div class="sub">${escapeHtml(a.uuid)} · ${escapeHtml((a.instances || []).join(", ") || "*")}</div></div><div class="actions"><button class="btn danger small" data-del>Quitar</button></div>`;
+      row.querySelector("[data-del]").addEventListener("click", async () => {
+        try { await call("whitelist_remove_access", { uuid: a.uuid }); await loadWhitelist(); loadWhitelistUI(); status("wl-status", "Acceso eliminado."); }
+        catch (e) { status("wl-status", e.message); }
+      });
+      accList.appendChild(row);
+    });
+    if (!(wl.access || []).length) accList.innerHTML = '<p class="muted">Nadie en whitelist.</p>';
+  }
+  loadThemeUI();
+}
+function bindAdmin() {
+  const syncAllBtn = $("btn-sync-all");
+  if (syncAllBtn) syncAllBtn.addEventListener("click", async () => {
+    if (!isAdmin) { status("sync-all-status", "Solo staff."); return; }
+    status("sync-all-status", "Sincronizando todas las instancias...");
+    try {
+      const res = await call("auto_sync_apply", {});
+      status("sync-all-status", res.applied.length ? `Actualizadas: ${res.applied.join(", ")}` : "Todo al día." + ((res.errors || []).length ? ` · Errores: ${res.errors.join("; ")}` : ""));
+      loadInstances();
+    } catch (e) { status("sync-all-status", e.message); }
+  });
+  const checkAllBtn = $("btn-check-all");
+  if (checkAllBtn) checkAllBtn.addEventListener("click", async () => {
+    if (!isAdmin) { status("sync-all-status", "Solo staff."); return; }
+    status("sync-all-status", "Comprobando actualizaciones...");
+    try {
+      const states = await call("auto_sync_check", {}) || [];
+      const pending = states.filter((s) => !s.error && !s.up_to_date && s.change_count > 0);
+      status("sync-all-status", pending.length ? "Pendientes: " + pending.map((s) => s.name).join(", ") : "Todo al día.");
+    } catch (e) { status("sync-all-status", e.message); }
+  });
+  const sel = $("launcher-theme-select");
+  if (sel) sel.addEventListener("change", () => {
+    setStaffThemePref(sel.value);
+    status("theme-status", sel.value === "auto" ? "Tema automático (según la instancia activa)." : `Tema forzado: ${THEME_LABELS[sel.value]}.`);
+    applyLauncherTheme();
+  });
+  const bindUuidLookup = (nameId, uuidId, statusId) => {
+    const nameEl = $(nameId);
+    const uuidEl = $(uuidId);
+    if (!nameEl || !uuidEl) return;
+    let timer = null;
+    nameEl.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const name = nameEl.value.trim();
+        if (!name || name.length < 3) return;
+        status(statusId, `Buscando UUID de '${name}'...`);
+        try {
+          const res = await call("uuid_lookup", { name });
+          if (res && res.uuid) {
+            uuidEl.value = res.uuid;
+            if (res.name && res.name !== name) nameEl.value = res.name;
+            status(statusId, `UUID de ${res.name}: ${res.uuid}`);
+          }
+        } catch (e) { status(statusId, "No encontrado. Escribe el UUID manualmente."); }
+      }, 600);
+    });
+  };
+  bindUuidLookup("wl-name", "wl-uuid", "wl-status");
+  bindUuidLookup("staff-name", "staff-uuid", "staff-status");
+  const addStaffBtn = $("btn-add-staff");
+  if (addStaffBtn) addStaffBtn.addEventListener("click", async () => {
+    const name = ($("staff-name").value || "").trim();
+    const uuid = ($("staff-uuid").value || "").trim();
+    if (!name || !uuid) { status("staff-status", "Nombre y UUID obligatorios."); return; }
+    try { await call("whitelist_add_staff", { name, uuid }); await loadWhitelist(); loadWhitelistUI(); status("staff-status", "Staff añadido."); $("staff-name").value = ""; $("staff-uuid").value = ""; }
+    catch (e) { status("staff-status", e.message); }
+  });
+  const addAccBtn = $("btn-add-access");
+  if (addAccBtn) addAccBtn.addEventListener("click", async () => {
+    const name = ($("wl-name").value || "").trim();
+    const uuid = ($("wl-uuid").value || "").trim();
+    const insts = ($("wl-instances").value || "*").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!name || !uuid) { status("wl-status", "Nombre y UUID obligatorios."); return; }
+    try { await call("whitelist_add_access", { name, uuid, instances: insts }); await loadWhitelist(); loadWhitelistUI(); status("wl-status", "Añadido a la whitelist."); $("wl-name").value = ""; $("wl-uuid").value = ""; }
+    catch (e) { status("wl-status", e.message); }
+  });
+  const wlInput = $("wl-instances");
+  const wlPickAll = $("btn-wl-pick-all");
+  if (wlPickAll && wlInput) wlPickAll.addEventListener("click", () => {
+    wlInput.value = "*";
+  });
+  const wlPickHallo = $("btn-wl-pick-navigay") || $("btn-wl-pick-hallogeey");
+  if (wlPickHallo && wlInput) wlPickHallo.addEventListener("click", () => {
+    const parts = (wlInput.value || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!parts.includes("NaviGay")) {
+      const filtered = parts.filter((s) => s !== "*");
+      filtered.push("NaviGay");
+      wlInput.value = filtered.join(", ");
+    }
+  });
+  const wlPickPau = $("btn-wl-pick-paucalipsis");
+  if (wlPickPau && wlInput) wlPickPau.addEventListener("click", () => {
+    const parts = (wlInput.value || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!parts.includes("Paucalipsis-2")) {
+      const filtered = parts.filter((s) => s !== "*");
+      filtered.push("Paucalipsis-2");
+      wlInput.value = filtered.join(", ");
+    }
+  });
+  const syncWlGhBtn = $("btn-sync-whitelist-gh");
+  if (syncWlGhBtn) syncWlGhBtn.addEventListener("click", async () => {
+    syncWlGhBtn.disabled = true;
+    syncWlGhBtn.textContent = "Sincronizando con GitHub...";
+    status("wl-status", "Subiendo whitelist a GitHub...");
+    try {
+      const res = await call("whitelist_sync_github", {});
+      status("wl-status", res || "Whitelist sincronizada en GitHub.");
+    } catch (e) {
+      status("wl-status", "Error al sincronizar: " + (e.message || e));
+    } finally {
+      syncWlGhBtn.disabled = false;
+      syncWlGhBtn.textContent = "☁️ Sincronizar con GitHub";
+    }
+  });
+}
+bindAdmin();
+
+// ─── Publicador de actualizaciones (owner) ───
+// El owner selecciona la carpeta local donde edita la instancia y la repo destino.
+// Sube solo las carpetas elegidas (mods, config, etc.) a GitHub vía Git Data API.
+// Los usuarios finales reciben ese cambio con sync_check/sync_apply al darle a jugar.
+let publishRenderToken = 0;
+
+async function scanLocalPublishFolders(path) {
+  const box = $("publish-folders");
+  if (!box) return;
+  const targetPath = (path || ($("publish-local-path") || {}).value || "").trim();
+  box.innerHTML = "";
+  if (!targetPath) {
+    box.innerHTML = '<p class="muted">Elige o escribe una carpeta local para escanear sus subcarpetas.</p>';
+    return;
+  }
+  const token = ++publishRenderToken;
+  try {
+    status("publish-status", "Escaneando subcarpetas locales...");
+    const folders = await call("instance_list_publish_folders", { name: targetPath }) || [];
+    if (token !== publishRenderToken) return;
+    if (!folders.length) {
+      box.innerHTML = '<p class="muted">No se encontraron subcarpetas publicables en esta ruta.</p>';
+      status("publish-status", "");
       return;
     }
-    try {
-      await call("login_set_offline", { username: name });
-      status("offline-status", "Modo No premium activado.");
-      refreshLogin();
-    } catch (e) {
-      $("offline-mode").checked = false;
-      status("offline-status", e.message);
-    }
-  } else {
-    try {
-      const store = await call("login_get_state", {});
-      if (store.accounts && store.accounts.length > 0) {
-        await call("login_set_selected", { accountId: store.accounts[0].id });
-        status("offline-status", "Cuenta de Microsoft seleccionada.");
-      } else {
-        status("offline-status", "No hay cuentas premium guardadas. Inicia sesión con Microsoft.");
-      }
-      refreshLogin();
-    } catch (e) { status("offline-status", e.message); }
+    status("publish-status", `${folders.length} subcarpeta(s) encontradas.`);
+    folders.forEach((f) => {
+      const row = document.createElement("label");
+      row.className = "folder-check";
+      const isDefaultChecked = ["mods", "config", "resourcepacks", "shaderpacks", "scripts", "kubejs", "defaultconfigs"].includes(f.toLowerCase());
+      row.innerHTML = `<input type="checkbox" value="${escapeHtml(f)}" ${isDefaultChecked ? "checked" : ""} /> <span>${escapeHtml(f)}</span>`;
+      box.appendChild(row);
+    });
+  } catch (e) {
+    if (token !== publishRenderToken) return;
+    box.innerHTML = `<p class="muted">Error: ${escapeHtml(e.message)}</p>`;
+    status("publish-status", e.message);
   }
-});
+}
+
+async function setPublishLocalPath(path) {
+  const input = $("publish-local-path");
+  if (!input) return;
+  input.value = path;
+  await scanLocalPublishFolders(path);
+}
+
+async function loadPublishUI() {
+  if (!isOwner) return;
+  const localInput = $("publish-local-path");
+  if (localInput && !localInput.value.trim()) {
+    try {
+      const inst = (instances || []).find((i) => /hallogeey|navigay/i.test(i.name)) || (instances || [])[0];
+      if (inst) {
+        const dir = await call("instance_get_local_dir", { name: inst.name });
+        if (dir) await setPublishLocalPath(dir);
+      }
+    } catch (_) {}
+  }
+}
+
+function bindPublisher() {
+  const localInput = $("publish-local-path");
+  if (localInput) {
+    let timer = null;
+    localInput.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        scanLocalPublishFolders(localInput.value.trim());
+      }, 500);
+    });
+  }
+
+  const browseBtn = $("btn-browse-folder");
+  if (browseBtn) browseBtn.addEventListener("click", async () => {
+    try {
+      const picked = await call("pick_folder", {});
+      if (picked) {
+        await setPublishLocalPath(picked);
+      }
+    } catch (e) {
+      status("publish-status", "Error al seleccionar carpeta: " + e.message);
+    }
+  });
+
+  const pathHalloBtn = $("btn-path-navigay") || $("btn-path-hallogeey");
+  if (pathHalloBtn) pathHalloBtn.addEventListener("click", async () => {
+    try {
+      const inst = (instances || []).find((i) => /navigay|hallogeey/i.test(i.name));
+      const instName = inst ? inst.name : "NaviGay";
+      const dir = await call("instance_get_local_dir", { name: instName });
+      if (dir) {
+        await setPublishLocalPath(dir);
+        const repoSel = $("publish-target-repo");
+        if (repoSel) repoSel.value = "kazdev97/Hallogeey";
+      }
+    } catch (e) {
+      status("publish-status", "No se pudo obtener la ruta: " + e.message);
+    }
+  });
+
+  const pathPauBtn = $("btn-path-paucalipsis");
+  if (pathPauBtn) pathPauBtn.addEventListener("click", async () => {
+    try {
+      const inst = (instances || []).find((i) => /paucalipsis/i.test(i.name));
+      const instName = inst ? inst.name : "Paucalipsis-2";
+      const dir = await call("instance_get_local_dir", { name: instName });
+      if (dir) {
+        await setPublishLocalPath(dir);
+        const repoSel = $("publish-target-repo");
+        if (repoSel) repoSel.value = "kazdev97/Paucalipsis-2";
+      }
+    } catch (e) {
+      status("publish-status", "No se pudo obtener la ruta: " + e.message);
+    }
+  });
+
+  const openExpBtn = $("btn-path-open-explorer");
+  if (openExpBtn) openExpBtn.addEventListener("click", async () => {
+    const p = (localInput && localInput.value || "").trim();
+    if (!p) { status("publish-status", "Escribe o selecciona primero una carpeta."); return; }
+    try {
+      await call("open_folder", { path: p });
+    } catch (e) {
+      status("publish-status", "Error al abrir la carpeta: " + e.message);
+    }
+  });
+
+  const scanFoldersBtn = $("btn-scan-folders");
+  if (scanFoldersBtn) scanFoldersBtn.addEventListener("click", async () => {
+    scanFoldersBtn.disabled = true;
+    scanFoldersBtn.textContent = "Consultando...";
+    try {
+      await scanLocalPublishFolders();
+    } finally {
+      scanFoldersBtn.disabled = false;
+      scanFoldersBtn.textContent = "🔄 Consultar carpetas";
+    }
+  });
+
+  const selectAllBtn = $("btn-folders-select-all");
+  if (selectAllBtn) selectAllBtn.addEventListener("click", () => {
+    document.querySelectorAll("#publish-folders input[type=checkbox]").forEach((cb) => cb.checked = true);
+  });
+  const modsConfigBtn = $("btn-folders-mods-config");
+  if (modsConfigBtn) modsConfigBtn.addEventListener("click", () => {
+    document.querySelectorAll("#publish-folders input[type=checkbox]").forEach((cb) => {
+      const val = cb.value.toLowerCase();
+      cb.checked = (val === "mods" || val === "config");
+    });
+  });
+  const noneBtn = $("btn-folders-none");
+  if (noneBtn) noneBtn.addEventListener("click", () => {
+    document.querySelectorAll("#publish-folders input[type=checkbox]").forEach((cb) => cb.checked = false);
+  });
+
+  const publishBtn = $("btn-publish");
+  if (publishBtn) publishBtn.addEventListener("click", async () => {
+    const localPath = (localInput && localInput.value || "").trim();
+    if (!localPath) {
+      status("publish-status", "Selecciona o escribe la carpeta local de la instancia.");
+      return;
+    }
+    const repoSel = $("publish-target-repo");
+    const repo = (repoSel && repoSel.value || "").trim();
+    if (!repo) {
+      status("publish-status", "Selecciona la repo de destino.");
+      return;
+    }
+    const folders = Array.from(document.querySelectorAll("#publish-folders input[type=checkbox]:checked")).map((i) => i.value);
+    if (!folders.length) {
+      status("publish-status", "Marca al menos una carpeta para sincronizar.");
+      return;
+    }
+    const message = (($("publish-message") || {}).value || "").trim();
+
+    publishBtn.disabled = true;
+    publishBtn.textContent = "Publicando a GitHub…";
+    status("publish-status", `Subiendo ${folders.length} carpeta(s) a ${repo}...`);
+
+    try {
+      const sha = await call("publisher_publish", {
+        localPath,
+        repo,
+        branch: "main",
+        subpath: "",
+        folders,
+        message,
+      });
+      status("publish-status", `🚀 ¡Actualización publicada! Commit ${sha.slice(0, 10)}. Los usuarios la recibirán al jugar o sincronizar.`);
+      $("publish-message").value = "";
+    } catch (e) {
+      status("publish-status", "Error publicando actualización: " + e.message);
+    } finally {
+      publishBtn.disabled = false;
+      publishBtn.textContent = "🚀 Lanzar actualización";
+    }
+  });
+
+  // Token de GitHub en Ajustes
+  const tokenBtn = $("btn-save-token");
+  if (tokenBtn) tokenBtn.addEventListener("click", async () => {
+    const token = (($("gh-token") || {}).value || "").trim();
+    if (!token) { status("token-status", "Pega tu token de GitHub (ghp_…)."); return; }
+    tokenBtn.disabled = true;
+    try {
+      await call("publisher_set_token", { token });
+      $("gh-token").value = "";
+      status("token-status", "Token guardado. Ya puedes publicar actualizaciones.");
+    } catch (e) {
+      status("token-status", "Error guardando el token: " + e.message);
+    } finally {
+      tokenBtn.disabled = false;
+    }
+  });
+}
+bindPublisher();
+async function loadTokenStatus() {
+  const st = $("token-status");
+  if (!st) return;
+  if (!isOwner) { st.textContent = ""; return; }
+  try {
+    const has = await call("publisher_get_status", {});
+    st.textContent = has ? "Token configurado. Publicar está habilitado." : "Sin token. Pega uno para poder publicar.";
+  } catch (e) {
+    st.textContent = "";
+  }
+}
 let instances = [];
 let currentInstance = null;
 
@@ -301,8 +897,15 @@ async function loadInstances() {
     return;
   }
   instances.forEach((inst) => list.appendChild(instanceCard(inst)));
+  if (!isAdmin && userAccessInstances !== null && userAccessInstances.length === 0) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = "No tienes acceso a ninguna instancia. Contacta con el staff.";
+    list.prepend(p);
+  }
   fillRollbackForm();
   loadSource();
+  loadPublishUI();
   runAutoSync(false);
 }
 
@@ -317,19 +920,47 @@ async function loadSource() {
   try {
     const s = await getSettings();
     const url = (s.source_url || "").trim();
-    if (!url) {
-      renderAvailable([]);
-      status("instances-status", "No hay fuente configurada.");
-      return;
-    }
-    const list = await call("source_fetch", { url });
+    const list = await call("source_fetch", { url: url || undefined });
     renderAvailable(list || []);
     status("instances-status", (list && list.length)
       ? `${list.length} instancias disponibles en la fuente.`
       : "No hay instancias disponibles en la fuente.");
   } catch (e) {
-    $("available-list").innerHTML = "";
+    console.error("Error cargando instancias:", e);
+    renderAvailable([]);
+    status("instances-status", `Error consultando fuente: ${e.message || e}`);
   }
+}
+
+const refreshSourceBtn = $("btn-refresh-source");
+if (refreshSourceBtn) {
+  refreshSourceBtn.addEventListener("click", async () => {
+    refreshSourceBtn.disabled = true;
+    refreshSourceBtn.textContent = "Consultando...";
+    try {
+      await loadWhitelist().catch(() => {});
+      await loadSource();
+    } finally {
+      refreshSourceBtn.disabled = false;
+      refreshSourceBtn.textContent = "🔄 Consultar";
+    }
+  });
+}
+
+const refreshInstancesBtn = $("btn-refresh-instances");
+if (refreshInstancesBtn) {
+  refreshInstancesBtn.addEventListener("click", async () => {
+    refreshInstancesBtn.disabled = true;
+    refreshInstancesBtn.textContent = "Consultando...";
+    try {
+      await loadWhitelist().catch(() => {});
+      await loadInstances();
+      await runAutoSync(false);
+    } finally {
+      refreshInstancesBtn.disabled = false;
+      refreshInstancesBtn.textContent = "🔄 Consultar actualizaciones";
+    }
+  });
 }
 
 function renderSourceStatus(msg) {
@@ -346,6 +977,7 @@ function renderAvailable(list) {
   list.forEach((item) => {
     const card = document.createElement("div");
     card.className = "instance-card";
+    card.dataset.theme = detectTheme(item.name);
     const loader = item.loader || "vanilla";
     const meta = `${escapeHtml(loader)} ${escapeHtml(item.game_version || "?")}`
       + (item.loader_version ? " · " + escapeHtml(item.loader_version) : "")
@@ -353,7 +985,7 @@ function renderAvailable(list) {
     card.innerHTML = `
       <div class="icon">${escapeHtml((item.name || "?").charAt(0).toUpperCase())}</div>
       <div class="info">
-        <b>${escapeHtml(item.name)}</b>
+        <b>${escapeHtml(item.name)}</b>${themeChip(item.name)}
         ${item.installed ? '<span class="badge install">instalada</span>' : ""}
         <div class="sub">${meta}</div>
         ${item.description ? `<div class="sub">${escapeHtml(item.description)}</div>` : ""}
@@ -370,6 +1002,7 @@ function renderAvailable(list) {
 }
 
 async function installFromSource(item, btn) {
+  if (!canAccessInstance(item.name)) { status("instances-status", "No tienes acceso a esta instancia."); return; }
   if (DEMO) return installFromSourceDemo(item);
   status("instances-status", `Instalando '${item.name}' desde el source...`);
   setInstallProgress(1, `Instalando '${item.name}'...`);
@@ -470,10 +1103,14 @@ function instanceCard(inst) {
   el.className = "instance-card";
   const badge = inst.installed ? (inst.last_launched ? "" : "")
     : '<span class="badge outdated">no instalada</span>';
+  const allowed = canAccessInstance(inst.name);
+  const dis = allowed ? "" : "disabled";
+  const note = allowed ? "" : '<span class="badge outdated">sin acceso</span>';
+  el.dataset.theme = detectTheme(inst.name);
   el.innerHTML = `
     <div class="icon">${inst.name.charAt(0).toUpperCase()}</div>
     <div class="info">
-      <b>${escapeHtml(inst.name)}</b>${badge}
+      <b>${escapeHtml(inst.name)}</b>${themeChip(inst.name)}${badge}${note}
       <div class="sub">${escapeHtml(inst.loader)} ${escapeHtml(inst.game_version)}
         ${inst.loader_version ? "· " + escapeHtml(inst.loader_version) : ""}
         ${inst.manifest_url ? "· manifest: ajustado" : "· manifest: no configurado"}
@@ -481,10 +1118,10 @@ function instanceCard(inst) {
       </div>
     </div>
     <div class="actions">
-      ${!inst.installed ? '<button class="btn mint small" data-act="install">Instalar</button>' : ''}
-      <button class="btn lila small" data-act="check">Actualizar</button>
-      <button class="btn lila small" data-act="launch">Jugar</button>
-      <button class="btn ghost small" data-act="delete">Eliminar</button>
+      ${!inst.installed ? `<button class="btn mint small" data-act="install" ${dis}>Instalar</button>` : ''}
+      <button class="btn lila small" data-act="check" ${dis}>Actualizar</button>
+      <button class="btn lila small" data-act="launch" ${dis}>Jugar</button>
+      <button class="btn ghost small" data-act="delete" ${dis}>Eliminar</button>
     </div>`;
   const btnInstall = el.querySelector('[data-act="install"]');
   if (btnInstall) btnInstall.addEventListener("click", () => installInstance(inst));
@@ -506,6 +1143,7 @@ function escapeHtml(s) {
 }
 
 async function installInstance(inst) {
+  if (!canAccessInstance(inst.name)) { status("instances-status", "No tienes acceso a esta instancia."); return; }
   status("instances-status", `Instalando '${inst.name}' (descarga de versiones y librerías)...`);
   try {
     await call("install_instance", { name: inst.name });
@@ -518,6 +1156,7 @@ async function installInstance(inst) {
 
 async function checkUpdates(inst) {
   currentInstance = inst;
+  setActiveInstance(inst);
   status("instances-status", "Comprobando actualizaciones...");
   try {
     const diff = await call("sync_check", { name: inst.name });
@@ -814,6 +1453,10 @@ $("btn-rollback").addEventListener("click", async () => {
   } catch (e) { status("settings-status", "Error: " + e.message); }
 });
 async function launchInstance(inst) {
+  if (!currentUuid) { status("game-state", "Debes iniciar sesión con Microsoft para jugar."); showGate("Debes iniciar sesión con Microsoft para jugar."); return; }
+  if (!canAccessInstance(inst.name)) { status("game-state", "No tienes acceso a esta instancia."); status("instances-status", `No tienes acceso a '${inst.name}'. Contacta con el staff.`); return; }
+  setActiveInstance(inst);
+  const t = decideLauncherTheme();
   const settings = await call("settings_get", {}).catch(() => null) || {};
   let javaPath = (settings.java_path_override || "").trim();
   if (!javaPath) {
@@ -838,10 +1481,12 @@ async function launchInstance(inst) {
       status("game-state", "Aviso: no se pudo auto-actualizar (" + e.message + ")");
     }
   }
-  status("game-state", "Lanzando...");
+  status("game-state", `Lanzando '${inst.name}' · Tema ${THEME_LABELS[t]}...`);
   try {
     const pid = await call("launch_game", { name: inst.name, javaPath });
-    status("game-state", `Juego lanzado (PID ${pid}).`);
+    playingInstance = inst.name;
+    applyLauncherTheme();
+    status("game-state", `Juego lanzado (PID ${pid}). Tema ${THEME_LABELS[decideLauncherTheme()]}.`);
     if (DEMO) {
       const lines = [
         "[main/INFO]: Loading Minecraft 1.21.4 with Fabric Loader 0.16.14",
@@ -856,6 +1501,8 @@ async function launchInstance(inst) {
       lines.forEach((l, i) => setTimeout(() => appendLog(l, null), i * 350));
     }
   } catch (e) {
+    playingInstance = "";
+    applyLauncherTheme();
     status("game-state", "Error al lanzar: " + e.message);
     refreshLogin();
   }
@@ -868,7 +1515,12 @@ $("btn-launch").addEventListener("click", async () => {
 });
 
 $("btn-kill").addEventListener("click", async () => {
-  try { await call("launch_kill", {}); status("game-state", "Juego detenido."); }
+  try {
+    await call("launch_kill", {});
+    playingInstance = "";
+    applyLauncherTheme();
+    status("game-state", "Juego detenido.");
+  }
   catch (e) { status("game-state", e.message); }
 });
 
@@ -878,10 +1530,16 @@ EVENT.listen("launch/line", (data) => {
   appendLog(data.payload.line, data.payload.stream);
 });
 EVENT.listen("launch/exit", () => {
+  playingInstance = "";
+  applyLauncherTheme();
   appendLog("— el juego terminó —", null);
   status("game-state", "El juego terminó.");
 });
-EVENT.listen("launch/error", (data) => status("game-state", data.payload));
+EVENT.listen("launch/error", (data) => {
+  playingInstance = "";
+  applyLauncherTheme();
+  status("game-state", data.payload);
+});
 EVENT.listen("sync/status", (data) => status("instances-status", data.payload));
 EVENT.listen("sync/progress", (data) => setInstallProgress(data.payload.percent || 0, data.payload.status || ""));
 EVENT.listen("java/progress", (data) => status("settings-status", data.payload));
@@ -973,8 +1631,17 @@ function checkLauncherUpdate() {
   });
 }
 initTheme();
-refreshLogin();
-loadInstances();
-runAutoSync(true);
+// Consultar automáticamente instancias disponibles y locales de inmediato al abrir el launcher
+loadInstances().catch(() => {});
+loadSource().catch(() => {});
+runAutoSync(true).catch(() => {});
+
+refreshLogin().then(() => {
+  loadWhitelist().then(() => {
+    loadInstances().catch(() => {});
+    loadSource().catch(() => {});
+    runAutoSync(true).catch(() => {});
+  }).catch(() => {});
+}).catch(() => {});
 checkLauncherUpdate();
 call("discord_set_page", { page: "login" }).catch(() => {});

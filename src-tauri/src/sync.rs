@@ -1,6 +1,6 @@
 
 use crate::config::instances_dir;
-use crate::downloader::{download_file, sha256_file, http_client};
+use crate::downloader::{download_file, download_many, sha256_file, http_client, DlJob, MAX_CONCURRENT_DOWNLOADS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -8,6 +8,22 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const MANIFEST_FORMAT: &str = "pau-manifest";
+
+/// Acepta strings, numeros o null y los normaliza a String.
+fn de_string_or_num<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceInstance {
     #[serde(default)]
@@ -24,7 +40,7 @@ pub struct SourceInstance {
     pub loader_version: String,
     #[serde(default)]
     pub manifest_url: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_num")]
     pub revision: String,
     #[serde(default)]
     pub installed: bool,
@@ -68,7 +84,7 @@ pub struct ManifestFile {
 pub struct Manifest {
     #[serde(default)]
     pub format: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_num")]
     pub revision: String,
     #[serde(default)]
     pub name: String,
@@ -92,6 +108,19 @@ pub struct Manifest {
     pub protected: Vec<String>,
     #[serde(default)]
     pub managed: Vec<String>,
+    #[serde(default)]
+    pub default_resourcepacks: Vec<String>,
+    #[serde(default)]
+    pub banned: Vec<String>,
+    /// Archivos que el juego reescribe en caliente (estado de FancyMenu, etc.).
+    /// Se actualizan igual que el resto, pero no cuentan como "pendiente" en
+    /// el aviso de actualizaciones, porque su hash siempre cambia al jugar.
+    #[serde(default)]
+    pub volatile: Vec<String>,
+    /// Si es true, el launcher borra TODA la carpeta de instancia antes de
+    /// aplicar el pack (borrado completo: saves, mods, config, todo).
+    #[serde(default)]
+    pub wipe: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -196,16 +225,27 @@ pub async fn fetch_manifest(url_or_path: &str) -> Result<Manifest, String> {
                 url_or_path
             ));
         }
-        crate::downloader::get_text(&client, &resolved, Duration::from_secs(30))
-            .await
-            .map_err(|e| format!("descargar manifest: {e}"))?
+        let mut last_err = String::new();
+        for attempt in 1..=3 {
+            match crate::downloader::get_text(&client, &resolved, Duration::from_secs(30)).await {
+                Ok(text) => return parse_manifest(&text),
+                Err(e) => {
+                    last_err = e;
+                    if attempt < 3 {
+                        tokio::time::sleep(Duration::from_millis(800 * attempt as u64)).await;
+                    }
+                }
+            }
+        }
+        return Err(format!("no se pudo descargar la informacion del pack: {last_err}"));
     };
     parse_manifest(&raw)
 }
 
 pub fn parse_manifest(raw: &str) -> Result<Manifest, String> {
+    let cleaned = raw.trim().trim_start_matches('\u{FEFF}');
     let manifest: Manifest =
-        serde_json::from_str(raw).map_err(|e| format!("manifest JSON inválido: {e}"))?;
+        serde_json::from_str(cleaned).map_err(|e| format!("manifest JSON inválido: {e}"))?;
     if !manifest.format.is_empty() && manifest.format != MANIFEST_FORMAT {
         return Err(format!("Formato de manifest no soportado: {}", manifest.format));
     }
@@ -277,10 +317,19 @@ pub fn parse_source_index(raw: &str) -> Result<Vec<SourceInstance>, String> {
 pub async fn fetch_source_index(url: &str) -> Result<Vec<SourceInstance>, String> {
     let client = http_client();
     let resolved = resolve_download_url(url);
-    let text = crate::downloader::get_text(&client, &resolved, Duration::from_secs(30))
-        .await
-        .map_err(|e| format!("descargar índice: {e}"))?;
-    parse_source_index(&text)
+    let mut last_err = String::new();
+    for attempt in 1..=3 {
+        match crate::downloader::get_text(&client, &resolved, Duration::from_secs(30)).await {
+            Ok(text) => return parse_source_index(&text),
+            Err(e) => {
+                last_err = e;
+                if attempt < 3 {
+                    tokio::time::sleep(Duration::from_millis(800 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+    Err(format!("no se pudo descargar la lista de instancias: {last_err}"))
 }
 #[allow(clippy::too_many_arguments)]
 pub async fn install_remote_instance(
@@ -389,6 +438,30 @@ fn is_managed(path: &str, managed: &[String]) -> bool {
     let top = path.split('/').next().unwrap_or("");
     managed.iter().any(|f| f == top)
 }
+
+fn is_banned(path: &str, banned: &[String]) -> bool {
+    if banned.is_empty() {
+        return false;
+    }
+    banned.iter().any(|b| {
+        path == b
+            || path.starts_with(&format!("{b}/"))
+            || path.strip_suffix(".disabled").map_or(false, |p| p == b || p.starts_with(&format!("{b}/")))
+    })
+}
+
+fn volatile_paths(manifest: &Manifest) -> Vec<String> {
+    manifest.volatile.clone()
+}
+
+fn is_volatile(path: &str, volatile: &[String]) -> bool {
+    if volatile.is_empty() {
+        return false;
+    }
+    volatile
+        .iter()
+        .any(|v| path == v || path.starts_with(&format!("{v}/")))
+}
 fn list_local_managed(instance_dir: &Path, managed: &[String]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for folder in managed {
@@ -422,21 +495,21 @@ fn list_local_managed(instance_dir: &Path, managed: &[String]) -> Vec<(String, S
 }
 pub async fn check_updates(instance_dir: &Path, manifest_url: &str) -> Result<SyncDiff, String> {
     let manifest = fetch_manifest(manifest_url).await?;
+    let previous = load_manifest_cache(instance_dir);
+    let diff = compute_diff(instance_dir, &manifest, previous.as_ref());
     cache_manifest(instance_dir, &manifest);
-    Ok(compute_diff(instance_dir, &manifest))
+    Ok(diff)
 }
 
-pub fn compute_diff(instance_dir: &Path, manifest: &Manifest) -> SyncDiff {
+pub fn compute_diff(instance_dir: &Path, manifest: &Manifest, previous: Option<&Manifest>) -> SyncDiff {
     let local_meta = crate::instances::load_meta(instance_dir);
     let local_revision = local_meta.server_version;
     let managed = managed_folders(manifest);
     let protected = protected_paths(manifest);
+    let previous_paths: HashSet<String> = previous
+        .map(|p| p.files.iter().map(|f| f.path.clone()).collect())
+        .unwrap_or_default();
     let mut remote: std::collections::BTreeMap<String, String> = Default::default();
-    for f in &manifest.files {
-        if is_managed(&f.path, &managed) && !protected.contains(&f.path) {
-            remote.insert(f.path.clone(), f.sha256.clone());
-        }
-    }
 
     let local = list_local_managed(instance_dir, &managed);
     let mut local_map: std::collections::BTreeMap<String, String> = Default::default();
@@ -444,13 +517,21 @@ pub fn compute_diff(instance_dir: &Path, manifest: &Manifest) -> SyncDiff {
         local_map.insert(path, hash);
     }
 
+    for f in &manifest.files {
+        if !is_managed(&f.path, &managed) || protected.contains(&f.path) {
+            continue;
+        }
+        remote.insert(f.path.clone(), f.sha256.clone());
+    }
+
+    let volatile = volatile_paths(manifest);
     let mut missing = Vec::new();
     let mut different = Vec::new();
     for (path, hash) in &remote {
         match local_map.get(path) {
             None => missing.push(path.clone()),
             Some(local_hash) => {
-                if !hash.is_empty() && local_hash != hash {
+                if !hash.is_empty() && local_hash != hash && !is_volatile(path, &volatile) {
                     different.push(path.clone());
                 }
             }
@@ -459,7 +540,10 @@ pub fn compute_diff(instance_dir: &Path, manifest: &Manifest) -> SyncDiff {
 
     let mut extra = Vec::new();
     for path in local_map.keys() {
-        if !remote.contains_key(path) {
+        if remote.contains_key(path) {
+            continue;
+        }
+        if previous_paths.contains(path) || is_banned(&path, &manifest.banned) {
             extra.push(path.clone());
         }
     }
@@ -489,6 +573,7 @@ pub fn compute_diff(instance_dir: &Path, manifest: &Manifest) -> SyncDiff {
         has_archive: !manifest.archive_url.is_empty(),
     }
 }
+
 async fn download_archive(
     manifest: &Manifest,
     instance_dir: &Path,
@@ -544,8 +629,16 @@ pub async fn apply_updates(
     on_status: &mut (dyn FnMut(String) + Send),
 ) -> Result<SyncResult, String> {
     let manifest = fetch_manifest(manifest_url).await?;
+    if manifest.wipe {
+        on_status("Borrando instancia completa...".to_string());
+        if instance_dir.exists() {
+            fs::remove_dir_all(instance_dir).map_err(|e| format!("borrar instancia: {e}"))?;
+        }
+        fs::create_dir_all(instance_dir).map_err(|e| format!("recrear instancia: {e}"))?;
+    }
+    let previous = load_manifest_cache(instance_dir);
+    let diff = compute_diff(instance_dir, &manifest, previous.as_ref());
     cache_manifest(instance_dir, &manifest);
-    let diff = compute_diff(instance_dir, &manifest);
     if diff.up_to_date && diff.change_count == 0 {
         return Ok(SyncResult {
             applied_revision: manifest.revision.clone(),
@@ -626,6 +719,8 @@ pub async fn apply_updates(
     } else {
         let client = http_client();
         on_status("Descargando archivos individuales...".to_string());
+        let mut jobs: Vec<DlJob> = Vec::new();
+        let mut was_replace: std::collections::HashMap<String, bool> = Default::default();
         for f in &manifest.files {
             if !is_managed(&f.path, &managed) || protected.contains(&f.path) {
                 continue;
@@ -638,7 +733,6 @@ pub async fn apply_updates(
                 }
             };
             let dest = instance_dir.join(&f.path);
-            let is_replace = dest.exists();
             let changed = local_has_changed(instance_dir, &f.path, &f.sha256);
             if !changed && dest.exists() {
                 continue;
@@ -646,17 +740,24 @@ pub async fn apply_updates(
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).ok();
             }
-            match download_file(&client, &url, &dest, &mut |_, _| {}).await {
+            was_replace.insert(f.path.clone(), dest.exists());
+            jobs.push(DlJob { key: f.path.clone(), urls: vec![url], dest });
+        }
+        let total_jobs = jobs.len().max(1);
+        download_many(&client, jobs, MAX_CONCURRENT_DOWNLOADS, &mut |done, _, outcome| {
+            on_status(format!("Descargando archivo {done}/{total_jobs}..."));
+            match outcome.result {
                 Ok(()) => {
-                    if is_replace {
-                        replaced.push(f.path.clone());
+                    if was_replace.get(&outcome.key).copied().unwrap_or(false) {
+                        replaced.push(outcome.key);
                     } else {
-                        downloaded.push(f.path.clone());
+                        downloaded.push(outcome.key);
                     }
                 }
-                Err(e) => errors.push(format!("{}: {e}", f.path)),
+                Err(e) => errors.push(format!("{}: {e}", outcome.key)),
             }
-        }
+        })
+        .await;
     }
     let mut removed = Vec::new();
     for path in &diff.extra {
@@ -796,20 +897,70 @@ struct GitCtx {
     path: String, // "" = raíz del repo
 }
 
+pub fn parse_github_url(url: &str) -> Option<(String, String, String)> {
+    let clean = url.trim();
+    if let Some(rest) = clean.strip_prefix("https://raw.githubusercontent.com/") {
+        let parts: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.len() >= 3 {
+            let repo = format!("{}/{}", parts[0], parts[1]);
+            let branch = parts[2].to_string();
+            let path_parts = if parts.len() > 3 {
+                let last = parts[parts.len() - 1];
+                if last.ends_with(".json") || last.ends_with(".txt") {
+                    &parts[3..parts.len() - 1]
+                } else {
+                    &parts[3..]
+                }
+            } else {
+                &[]
+            };
+            let path = path_parts.join("/");
+            return Some((repo, branch, path));
+        }
+    } else if let Some(rest) = clean.strip_prefix("https://github.com/") {
+        let parts: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.len() >= 2 {
+            let repo = format!("{}/{}", parts[0], parts[1]);
+            let branch = if parts.len() >= 4 && (parts[2] == "tree" || parts[2] == "blob") {
+                parts[3].to_string()
+            } else {
+                "main".to_string()
+            };
+            let path_parts = if parts.len() > 4 && (parts[2] == "tree" || parts[2] == "blob") {
+                &parts[4..]
+            } else {
+                &[]
+            };
+            let path = path_parts.join("/");
+            return Some((repo, branch, path));
+        }
+    }
+    None
+}
+
 fn git_ctx(meta: &crate::instances::InstanceMeta) -> Option<GitCtx> {
-    let repo = meta.github_repo.trim();
+    let mut repo = meta.github_repo.trim().to_string();
+    let mut branch = meta.github_branch.trim().to_string();
+    let mut path = meta.github_path.trim().trim_matches('/').to_string();
+
+    if repo.is_empty() && !meta.manifest_url.trim().is_empty() {
+        if let Some((r, b, p)) = parse_github_url(&meta.manifest_url) {
+            repo = r;
+            if branch.is_empty() { branch = b; }
+            if path.is_empty() { path = p; }
+        }
+    }
+
     if repo.is_empty() {
         return None;
     }
-    let branch = if meta.github_branch.trim().is_empty() {
-        "main"
-    } else {
-        meta.github_branch.trim()
-    };
+    if branch.is_empty() {
+        branch = "main".to_string();
+    }
     Some(GitCtx {
-        repo: repo.to_string(),
-        branch: branch.to_string(),
-        path: meta.github_path.trim().trim_matches('/').to_string(),
+        repo,
+        branch,
+        path,
     })
 }
 
@@ -1052,39 +1203,51 @@ pub async fn git_apply_dir(
     let mut removed = Vec::new();
     let mut errors = Vec::new();
     let client = http_client();
-    let total_dl = (pend.missing.len() + pend.different.len()).max(1);
-    let mut done = 0usize;
+    let mut jobs: Vec<DlJob> = Vec::new();
+    let mut was_replace: std::collections::HashMap<String, bool> = Default::default();
     for rel in pend.missing.iter().chain(pend.different.iter()) {
         if is_git_protected(rel, &protected) || rel.starts_with('.') {
             continue;
         }
         let dest = instance_dir.join(rel);
-        let is_replace = dest.exists();
-        let url = sync_raw_url(&ctx, rel);
-        done += 1;
+        was_replace.insert(rel.clone(), dest.exists());
+        jobs.push(DlJob { key: rel.clone(), urls: vec![sync_raw_url(&ctx, rel)], dest });
+    }
+    let total_dl = jobs.len().max(1);
+    let mut done = 0usize;
+    let mut lfs_retry: Vec<String> = Vec::new();
+    download_many(&client, jobs, MAX_CONCURRENT_DOWNLOADS, &mut |d, _, outcome| {
+        done = d;
         on_progress(
             85 + 14 * (done as u32) / (total_dl as u32),
             format!("Descargando pack {done}/{total_dl}"),
         );
-        on_status(format!("Descargando {rel}..."));
-        match crate::downloader::download_file(&client, &url, &dest, &mut |_, _| {}).await {
+        on_status(format!("Descargando {}...", outcome.key));
+        let rel = outcome.key.clone();
+        match outcome.result {
             Ok(()) => {
-                if is_lfs_pointer(&dest) {
-                    let media = lfs_media_url(&ctx, rel);
-                    match crate::downloader::download_file(&client, &media, &dest, &mut |_, _| {}).await {
-                        Ok(()) => {
-                            if is_replace {
-                                replaced.push(rel.clone())
-                            } else {
-                                downloaded.push(rel.clone())
-                            }
-                        }
-                        Err(e) => errors.push(format!("{rel}: {e}")),
-                    }
-                } else if is_replace {
-                    replaced.push(rel.clone())
+                // Los archivos LFS llegan como puntero; se reintentan contra media.githubusercontent.com abajo
+                if is_lfs_pointer(&outcome.dest) {
+                    lfs_retry.push(rel);
+                } else if was_replace.get(&rel).copied().unwrap_or(false) {
+                    replaced.push(rel)
                 } else {
-                    downloaded.push(rel.clone())
+                    downloaded.push(rel)
+                }
+            }
+            Err(e) => errors.push(format!("{rel}: {e}")),
+        }
+    })
+    .await;
+    for rel in lfs_retry {
+        let dest = instance_dir.join(&rel);
+        let media = lfs_media_url(&ctx, &rel);
+        match crate::downloader::download_file(&client, &media, &dest, &mut |_, _| {}).await {
+            Ok(()) => {
+                if was_replace.get(&rel).copied().unwrap_or(false) {
+                    replaced.push(rel)
+                } else {
+                    downloaded.push(rel)
                 }
             }
             Err(e) => errors.push(format!("{rel}: {e}")),
@@ -1215,4 +1378,175 @@ pub async fn auto_sync_all(
         already_up_to_date: already,
         errors,
     })
+}
+
+// ---- Publisher (owner): sube carpetas seleccionadas a GitHub vía Git Data API ----
+// Los usuarios finales reciben la actualización con sync_check/sync_apply o auto_sync_apply al darle a jugar,
+// ya que esos leen la rama github_branch del repo configurado en la instancia.
+
+pub fn list_publish_folders(target: &str) -> Result<Vec<String>, String> {
+    let p = Path::new(target);
+    let dir = if p.is_dir() {
+        p.to_path_buf()
+    } else {
+        crate::instances::instance_path(target)
+    };
+    if !dir.exists() {
+        return Err(format!("La carpeta '{}' no existe", target));
+    }
+    let protected: HashSet<String> = default_protected().into_iter().collect();
+    let mut folders = Vec::new();
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if protected.contains(&name) || name.starts_with('.') {
+                continue;
+            }
+            folders.push(name);
+        }
+    }
+    folders.sort();
+    Ok(folders)
+}
+
+async fn gh_request(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+    token: &str,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let mut req = client.request(method, url).bearer_auth(token);
+    if let Some(b) = body {
+        req = req.json(&b);
+    }
+    let resp = req.send().await.map_err(|e| format!("GitHub: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("GitHub respuesta: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("GitHub HTTP {} para {url}: {}", status.as_u16(), text.chars().take(300).collect::<String>()));
+    }
+    if text.trim().is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("GitHub JSON inválido: {e}"))
+}
+
+fn collect_files(base: &Path, dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<(), String> {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let rel_path = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            if path.is_dir() {
+                collect_files(base, &path, &rel_path, out)?;
+            } else if path.is_file() {
+                let _ = base;
+                out.push(rel_path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Publica carpetas locales directamente a un repositorio GitHub mediante Git Data API.
+pub async fn publish_from_folder(
+    local_path: &str,
+    repo: &str,
+    branch: &str,
+    subpath: &str,
+    folders: Vec<String>,
+    message: String,
+) -> Result<String, String> {
+    let token = crate::config::Settings::load().github_token.trim().to_string();
+    if token.is_empty() {
+        return Err("Guarda primero tu token de GitHub en Ajustes (owner).".to_string());
+    }
+    let p = Path::new(local_path);
+    let dir = if p.is_dir() {
+        p.to_path_buf()
+    } else {
+        crate::instances::instance_path(local_path)
+    };
+    if !dir.exists() || !dir.is_dir() {
+        return Err(format!("La carpeta local '{}' no existe o no es un directorio válido.", local_path));
+    }
+    let repo_clean = repo.trim()
+        .trim_start_matches("https://github.com/")
+        .trim_end_matches(".git")
+        .trim();
+    if repo_clean.is_empty() {
+        return Err("El repositorio GitHub no puede estar vacío.".to_string());
+    }
+    let branch_clean = if branch.trim().is_empty() { "main" } else { branch.trim() };
+    if folders.is_empty() {
+        return Err("Selecciona al menos una carpeta para sincronizar y publicar.".to_string());
+    }
+    let protected: HashSet<String> = default_protected().into_iter().collect();
+    let mut rels = Vec::new();
+    for f in &folders {
+        let top = f.split('/').next().unwrap_or("");
+        if protected.contains(top) || top.starts_with('.') {
+            continue;
+        }
+        let sub = dir.join(f);
+        if sub.is_dir() {
+            collect_files(&dir, &sub, f, &mut rels)?;
+        } else if sub.is_file() {
+            rels.push(f.clone());
+        }
+    }
+    if rels.is_empty() {
+        return Err("Las carpetas seleccionadas están vacías o no existen en la ruta indicada.".to_string());
+    }
+    if rels.len() > 2000 {
+        return Err(format!("Demasiados archivos ({}) para publicar de golpe. Reduce la selección.", rels.len()));
+    }
+    let client = http_client();
+    let head_url = format!("https://api.github.com/repos/{}/git/refs/heads/{}", repo_clean, branch_clean);
+    let head = gh_request(&client, reqwest::Method::GET, &head_url, &token, None).await?;
+    let head_sha = head["object"]["sha"].as_str().ok_or("respuesta de rama inválida")?.to_string();
+    let commit_url = format!("https://api.github.com/repos/{}/git/commits/{}", repo_clean, head_sha);
+    let commit = gh_request(&client, reqwest::Method::GET, &commit_url, &token, None).await?;
+    let base_tree = commit["tree"]["sha"].as_str().ok_or("árbol base inválido")?.to_string();
+
+    let blob_url = format!("https://api.github.com/repos/{}/git/blobs", repo_clean);
+    let prefix = subpath.trim_matches('/').to_string();
+    let mut tree_entries = Vec::new();
+    for rel in &rels {
+        let bytes = fs::read(dir.join(rel)).map_err(|e| format!("leer {rel}: {e}"))?;
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+        let blob = gh_request(&client, reqwest::Method::POST, &blob_url, &token, Some(serde_json::json!({"content": b64, "encoding": "base64"}))).await?;
+        let blob_sha = blob["sha"].as_str().ok_or("blob inválido")?.to_string();
+        let repo_path = if prefix.is_empty() { rel.clone() } else { format!("{prefix}/{rel}") };
+        tree_entries.push(serde_json::json!({"path": repo_path, "mode": "100644", "type": "blob", "sha": blob_sha}));
+    }
+    let tree_url = format!("https://api.github.com/repos/{}/git/trees", repo_clean);
+    let tree = gh_request(&client, reqwest::Method::POST, &tree_url, &token, Some(serde_json::json!({"base_tree": base_tree, "tree": tree_entries}))).await?;
+    let new_tree = tree["sha"].as_str().ok_or("árbol nuevo inválido")?.to_string();
+    let msg = if message.trim().is_empty() {
+        format!("Actualización: {}", folders.join(", "))
+    } else {
+        message.trim().to_string()
+    };
+    let new_commit_url = format!("https://api.github.com/repos/{}/git/commits", repo_clean);
+    let new_commit = gh_request(&client, reqwest::Method::POST, &new_commit_url, &token, Some(serde_json::json!({"message": msg, "tree": new_tree, "parents": [head_sha]}))).await?;
+    let commit_sha = new_commit["sha"].as_str().ok_or("commit nuevo inválido")?.to_string();
+    let _ = gh_request(&client, reqwest::Method::PATCH, &head_url, &token, Some(serde_json::json!({"sha": commit_sha}))).await?;
+    Ok(commit_sha)
+}
+
+/// Publica al repo GitHub de la instancia las carpetas seleccionadas.
+/// Retorna el SHA del nuevo commit.
+pub async fn publish_instance(name: &str, folders: Vec<String>, message: String) -> Result<String, String> {
+    let dir = crate::instances::instance_path(name);
+    let meta = crate::instances::load_meta(&dir);
+    let ctx = git_ctx(&meta).ok_or_else(|| "La instancia no tiene github_repo configurada.".to_string())?;
+    publish_from_folder(&dir.to_string_lossy(), &ctx.repo, &ctx.branch, &ctx.path, folders, message).await
 }

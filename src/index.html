@@ -3,37 +3,44 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NexusLauncher</title>
+  <title>Nexus Launcher</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
-  <div class="app">
-    
-    <button id="theme-toggle" class="theme-toggle-btn" title="Cambiar modo oscuro / claro" aria-label="Cambiar modo oscuro / claro">
-      <svg class="theme-icon icon-sun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="5"></circle>
-        <line x1="12" y1="1" x2="12" y2="3"></line>
-        <line x1="12" y1="21" x2="12" y2="23"></line>
-        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-        <line x1="1" y1="12" x2="3" y2="12"></line>
-        <line x1="21" y1="12" x2="23" y2="12"></line>
-        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-      </svg>
-      <svg class="theme-icon icon-moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-      </svg>
-    </button>
+<body class="cyber">
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <!-- ═══ Decoración navideña (solo tema ataplay) ═══ -->
+  <div class="xmas-decor" aria-hidden="true">
+    <div class="xmas-snow"></div>
+  </div>
 
-    
+  <!-- ═══ LOGIN GATE ═══ -->
+  <div id="login-gate" class="login-gate">
+    <div class="gate-grid" aria-hidden="true"></div>
+    <div class="gate-card">
+      <div class="gate-logo">
+        <img src="assets/logo.svg" alt="Nexus Launcher" />
+      </div>
+      <div class="gate-kicker">Acceso por whitelist</div>
+      <h1 class="gate-title">nexus<span>launcher</span></h1>
+      <p class="gate-sub">Inicia sesión con Microsoft para verificar tu acceso a las instancias.</p>
+      <button class="btn primary cyber-btn" id="btn-login">Iniciar sesión con Microsoft</button>
+      <p id="login-status" class="status gate-status"></p>
+      <p class="gate-foot">Comprobamos tu UUID contra la whitelist</p>
+    </div>
+  </div>
+
+  <!-- ═══ APP (visible tras login) ═══ -->
+  <div class="app hidden" id="app-shell">
+    <button id="theme-toggle" class="theme-toggle-btn" title="Cambiar brillo" aria-label="Cambiar brillo">◐</button>
+
     <nav class="sidebar">
-      <div class="brand"><a class="brand-logo" href="https://github.com/kazdev97/NexusLauncher" target="_blank" rel="noopener"><img src="assets/icono.png" alt="NexusLauncher" /></a></div>
+      <div class="brand"><a class="brand-logo" href="https://github.com/kazdev97/NexusLauncher" target="_blank" rel="noopener"><img src="assets/logo.svg" alt="Nexus Launcher" /></a><div class="brand-name">nexus<span>launcher</span></div></div>
       <div class="nav-items">
-        <button class="nav-item active" data-page="login">Cuenta</button>
-        <button class="nav-item" data-page="instances">Instancias</button>
+        <button class="nav-item active" data-page="instances">Instancias</button>
+        <button class="nav-item hidden" data-page="admin" id="nav-admin">Admin</button>
         <button class="nav-item" data-page="settings">Ajustes</button>
         <button class="nav-item" data-page="console">Consola</button>
+        <button class="nav-item" data-page="login">Cuenta</button>
       </div>
       <div class="nav-footer">
         <button id="donate-btn" class="donate-btn">
@@ -47,15 +54,296 @@
       </div>
     </nav>
 
-    
     <main class="content">
-      
-      <section id="page-login" class="page active">
+      <!-- INSTANCIAS -->
+      <section id="page-instances" class="page active">
+        <div class="page-head">
+          <div>
+            <div class="kicker">Tus mundos</div>
+            <h1>Instancias</h1>
+          </div>
+          <div id="access-badge" class="access-badge hidden"></div>
+        </div>
+
+        <div id="no-access" class="card glass hidden no-access">
+          <div class="no-access-title">Sin acceso</div>
+          <p>No tienes acceso a ninguna instancia.</p>
+          <p class="muted">Contacta con el staff para que te añadan a la whitelist. Tu UUID:</p>
+          <code id="no-access-uuid"></code>
+        </div>
+
+        <div class="card glass">
+          <div class="row between" style="margin-bottom: 12px; align-items: center;">
+            <h2 style="margin: 0;">Instancias disponibles</h2>
+            <button class="btn small" id="btn-refresh-source" type="button">🔄 Consultar</button>
+          </div>
+          <div id="available-list" class="list"></div>
+        </div>
+
+        <div class="card glass hidden" id="install-progress">
+          <div class="progress-track">
+            <div class="progress-fill" id="install-fill"></div>
+          </div>
+          <p id="install-text" class="muted">Instalando...</p>
+        </div>
+
+        <div id="updates-banner" class="card glass hidden"></div>
+
+        <div class="card glass">
+          <div class="row between" style="margin-bottom: 12px; align-items: center;">
+            <h2 style="margin: 0;">Instaladas</h2>
+            <button class="btn small ghost" id="btn-refresh-instances" type="button">🔄 Consultar actualizaciones</button>
+          </div>
+          <div id="instances-list" class="list"></div>
+        </div>
+        <p id="instances-status" class="status"></p>
+      </section>
+
+      <!-- ADMIN -->
+      <section id="page-admin" class="page">
+        <div class="page-head">
+          <div>
+            <div class="kicker">Panel de control</div>
+            <h1>Admin</h1>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <h2>⚙ Sincronización de instancias</h2>
+          <p class="muted">Actualiza todas las instancias instaladas a la última revisión disponible.</p>
+          <div class="row">
+            <button class="btn primary" id="btn-sync-all">Sincronizar todas</button>
+            <button class="btn lila" id="btn-check-all">Comprobar actualizaciones</button>
+          </div>
+          <p id="sync-all-status" class="status"></p>
+        </div>
+
+        <div class="card glass">
+          <h2>🛡 Staff autorizado</h2>
+          <div id="staff-list" class="list"></div>
+          <div class="form-grid">
+            <label>Nombre
+              <input id="staff-name" placeholder="Nombre del staff" />
+            </label>
+            <label>UUID
+              <input id="staff-uuid" placeholder="UUID de Minecraft" />
+            </label>
+          </div>
+          <button class="btn primary" id="btn-add-staff">Añadir staff</button>
+          <p id="staff-status" class="status"></p>
+        </div>
+
+        <div class="card glass">
+          <h2>📋 Whitelist (acceso a instancias)</h2>
+          <p class="muted">“Todas” = acceso a todas las instancias. Selecciona o escribe nombres exactos o *.</p>
+          <div id="access-list" class="list"></div>
+          <div class="form-grid">
+            <label>Nombre
+              <input id="wl-name" placeholder="Nombre del jugador" />
+            </label>
+            <label>UUID
+              <input id="wl-uuid" placeholder="UUID de Minecraft" />
+            </label>
+            <label class="span-2">Instancias (separadas por coma, * = todas)
+              <input id="wl-instances" placeholder="*, NaviGay, Paucalipsis-2" />
+            </label>
+          </div>
+          <div class="row" style="margin: 8px 0 12px 0; gap: 8px;">
+            <span class="muted" style="font-size: 11px;">Añadir rápido:</span>
+            <button class="btn small ghost" id="btn-wl-pick-all" type="button">✨ Todas (*)</button>
+            <button class="btn small ghost" id="btn-wl-pick-navigay" type="button">🎮 NaviGay</button>
+            <button class="btn small ghost" id="btn-wl-pick-paucalipsis" type="button">🌸 Paucalipsis-2</button>
+          </div>
+          <div class="row" style="margin-top: 10px; gap: 8px;">
+            <button class="btn primary" id="btn-add-access">Añadir a la whitelist</button>
+            <button class="btn ghost" id="btn-sync-whitelist-gh" type="button" title="Sube la whitelist actual a GitHub (kazdev97/Hallogeey) para que todos los usuarios y staff la reciban en tiempo real">☁️ Sincronizar con GitHub</button>
+          </div>
+          <p id="wl-status" class="status"></p>
+        </div>
+
+        <div class="card glass" id="card-publish">
+          <h2>🚀 Publicar actualización (owner)</h2>
+          <p class="muted">Selecciona la carpeta local en donde estás editando la instancia y la repo destino. Se subirán a GitHub las carpetas que marques para que los usuarios reciban la actualización.</p>
+
+          <!-- 1. Instancia / Repo destino -->
+          <div class="form-grid">
+            <label class="span-2">Instancia / Repo de GitHub a actualizar
+              <select id="publish-target-repo">
+                <option value="kazdev97/Hallogeey" data-name="NaviGay" data-branch="main">NaviGay (kazdev97/Hallogeey) — Rama main</option>
+                <option value="kazdev97/Paucalipsis-2" data-name="Paucalipsis-2" data-branch="main">Paucalipsis 2 (kazdev97/Paucalipsis-2) — Rama main</option>
+              </select>
+            </label>
+          </div>
+
+          <!-- 2. Carpeta local en edición -->
+          <div style="margin-top: 10px;">
+            <label style="display:block; font-size:12px; font-weight:700; margin-bottom:6px; color:var(--text);">Carpeta local de la instancia en edición</label>
+            <div class="row" style="gap: 8px;">
+              <input id="publish-local-path" style="flex: 1;" placeholder="C:\ruta\a\tu\carpeta\de\instancia" />
+              <button class="btn" id="btn-browse-folder" type="button">📁 Examinar...</button>
+              <button class="btn ghost" id="btn-scan-folders" type="button">🔄 Consultar carpetas</button>
+            </div>
+            <div class="row" style="margin-top: 8px; gap: 6px;">
+              <span class="muted" style="font-size: 11px;">Rutas rápidas:</span>
+              <button class="btn small ghost" id="btn-path-navigay" type="button">Instalado: NaviGay</button>
+              <button class="btn small ghost" id="btn-path-paucalipsis" type="button">Instalado: Paucalipsis 2</button>
+              <button class="btn small ghost" id="btn-path-open-explorer" type="button" title="Abrir esta carpeta en el explorador de Windows">📂 Abrir en explorador</button>
+            </div>
+          </div>
+
+          <!-- 3. Mensaje del commit opcional -->
+          <div class="form-grid" style="margin-top: 12px;">
+            <label class="span-2">Mensaje del commit (opcional)
+              <input id="publish-message" placeholder="Actualización de mods (ej. nuevos mods y configs)" />
+            </label>
+          </div>
+
+          <!-- 4. Selección de carpetas a sincronizar -->
+          <div style="margin-top: 14px;">
+            <div class="row" style="justify-content: space-between; margin-bottom: 6px;">
+              <span style="font-size: 13px; font-weight: 700; color: var(--text);">Carpetas a sincronizar:</span>
+              <div class="row" style="gap: 6px;">
+                <button class="btn small ghost" id="btn-folders-select-all" type="button">Todas</button>
+                <button class="btn small ghost" id="btn-folders-mods-config" type="button">Solo mods y config</button>
+                <button class="btn small ghost" id="btn-folders-none" type="button">Ninguna</button>
+              </div>
+            </div>
+            <div id="publish-folders" class="list" style="max-height: 220px; overflow-y: auto; padding: 10px;">
+              <p class="muted">Elige una carpeta local para escanear sus subcarpetas.</p>
+            </div>
+          </div>
+
+          <!-- 5. Botón de publicación -->
+          <div class="row" style="margin-top: 14px;">
+            <button class="btn primary" id="btn-publish" style="font-size: 14px; padding: 12px 24px;">🚀 Lanzar actualización</button>
+          </div>
+          <p id="publish-status" class="status"></p>
+        </div>
+
+        <div class="card glass">
+          <h2>🎨 Temas por instancia</h2>
+          <p class="muted">Automático detecta “ataplay” (arcoíris LGBT) o “paula” (rosa/morado). El tema tiñe todo el launcher según la instancia permitida; los usuarios no pueden cambiarlo.</p>
+          <div class="form-grid">
+            <label>Tema del launcher (solo staff)
+              <select id="launcher-theme-select">
+                <option value="auto">Automático (según instancia)</option>
+                <option value="cyber">Blanco y negro (base)</option>
+                <option value="ataplay">Ataplaygame · LGBT</option>
+                <option value="paula">DoctoraPaula · Rosa/Morado</option>
+              </select>
+            </label>
+          </div>
+          <div id="theme-list" class="list"></div>
+          <p id="theme-status" class="status"></p>
+        </div>
+      </section>
+
+      <!-- AJUSTES -->
+      <section id="page-settings" class="page">
+        <h1>Ajustes</h1>
+
+        <div class="card glass">
+          <h2>Memoria</h2>
+          <p class="muted" id="ram-info">Cargando información de RAM...</p>
+          <div class="row">
+            <label>Instancia (para la recomendación)
+              <select id="ram-instance"></select>
+            </label>
+          </div>
+          <div class="ram-row">
+            <input type="range" id="ram-slider" min="1" max="64" step="1" />
+            <span id="ram-value" class="ram-value">—</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="ram-auto" checked />
+            <span class="switch-track"><span class="switch-knob"></span></span>
+            <span>Auto (usar la recomendación del manifest)</span>
+          </label>
+          <p id="ram-feedback" class="ram-feedback">—</p>
+        </div>
+
+        <div class="card glass form-grid">
+          <label>Java
+            <input id="set-java" placeholder="C:\...\bin\java.exe" />
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="set-streamer" />
+            <span class="switch-track"><span class="switch-knob"></span></span>
+            <span>Modo streamer</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="set-auto" />
+            <span class="switch-track"><span class="switch-knob"></span></span>
+            <span>Actualizaciones automáticas</span>
+          </label>
+          <button class="btn primary" id="btn-save-settings">Guardar</button>
+        </div>
+
+        <div class="card glass" id="card-token">
+          <h2>🔑 Token de GitHub (owner)</h2>
+          <p class="muted">Necesario para publicar desde el launcher. Se guarda solo en este equipo.</p>
+          <label>Token
+            <input id="gh-token" type="password" placeholder="ghp_…" />
+          </label>
+          <div class="row">
+            <button class="btn primary" id="btn-save-token">Guardar token</button>
+          </div>
+          <p id="token-status" class="status"></p>
+        </div>
+
+        <div class="card glass">
+          <h2>Modo antilag</h2>
+          <p class="muted">Túnel que cubre solo la conexión de Minecraft</p>
+          <label>
+            <input id="antilag-host" placeholder="ej. play.miservidor.com o 203.0.113.10" />
+          </label>
+          <div class="row">
+            <button class="btn primary" id="btn-antilag-install">Instalar modo antilag</button>
+            <label class="switch">
+              <input type="checkbox" id="antilag-enable" />
+              <span class="switch-track"><span class="switch-knob"></span></span>
+              <span>Activar al jugar</span>
+            </label>
+          </div>
+          <p id="antilag-status" class="status"></p>
+          <p id="antilag-hint" class="status"></p>
+        </div>
+
+        <div class="card glass">
+          <h2>Backups / Rollback</h2>
+          <p class="muted">Cada actualización crea un backup antes de aplicar cambios.</p>
+          <div class="form-grid">
+            <select id="rb-instance"></select>
+            <select id="rb-revision"></select>
+            <button class="btn danger" id="btn-rollback">Restaurar revisión</button>
+          </div>
+        </div>
+        <p id="settings-status" class="status"></p>
+      </section>
+
+      <!-- CONSOLA -->
+      <section id="page-console" class="page">
+        <h1>Consola</h1>
+        <div class="card glass">
+          <div class="row">
+            <button class="btn primary" id="btn-launch">Jugar</button>
+            <button class="btn danger" id="btn-kill">Detener</button>
+            <button class="btn" id="btn-copy-console">Copiar consola</button>
+            <button class="btn" id="btn-clear-console">Limpiar</button>
+            <span id="game-state" class="status"></span>
+          </div>
+        </div>
+        <pre id="console" class="console"></pre>
+      </section>
+
+      <!-- CUENTA -->
+      <section id="page-login" class="page">
         <h1>Cuenta</h1>
         <div class="card glass">
           <div id="login-box">
             <p>Inicia sesión con tu cuenta de Microsoft para jugar.</p>
-            <button class="btn primary" id="btn-login">Iniciar sesión con Microsoft</button>
+            <button class="btn primary" id="btn-login-2">Iniciar sesión con Microsoft</button>
+            <p id="login-status-2" class="status"></p>
           </div>
           <div id="login-ok" class="hidden">
             <div class="account-profile">
@@ -88,133 +376,7 @@
             </div>
           </div>
         </div>
-        <div class="card glass">
-          <h2>Modo No premium</h2>
-          <p class="muted">Juega sin cuenta de Microsoft (No-Premium).</p>
-          <label class="switch">
-            <input type="checkbox" id="offline-mode" />
-            <span class="switch-track"><span class="switch-knob"></span></span>
-            <span>Activar modo No premium</span>
-          </label>
-          <div class="form-grid">
-            <label>Nombre de usuario
-              <input id="offline-username" placeholder="Ej. Juanito67" maxlength="16" />
-            </label>
-          </div>
-          <button class="btn primary" id="btn-save-offline">Guardar y usar modo No premium</button>
-          <p id="offline-status" class="status"></p>
-        </div>
-        <p id="login-status" class="status"></p>
-      </section>
-
-      
-      <section id="page-instances" class="page">
-        <div class="page-head">
-          <h1>Instancias</h1>
-        </div>
-
-        <div class="card glass">
-          <h2>Instancias disponibles</h2>
-          <div id="available-list" class="list"></div>
-        </div>
-
-        <div class="card glass hidden" id="install-progress">
-          <div class="progress-track">
-            <div class="progress-fill" id="install-fill"></div>
-          </div>
-          <p id="install-text" class="muted">Instalando...</p>
-        </div>
-
-        <div id="updates-banner" class="card glass hidden"></div>
-
-        <div id="instances-list" class="list"></div>
-        <p id="instances-status" class="status"></p>
-      </section>
-
-      
-      <section id="page-settings" class="page">
-        <h1>Ajustes</h1>
-
-        <div class="card glass">
-          <h2>Memoria</h2>
-          <p class="muted" id="ram-info">Cargando información de RAM...</p>
-          <div class="row">
-            <label>Instancia (para la recomendación)
-              <select id="ram-instance"></select>
-            </label>
-          </div>
-          <div class="ram-row">
-            <input type="range" id="ram-slider" min="1" max="64" step="1" />
-            <span id="ram-value" class="ram-value">—</span>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="ram-auto" checked />
-            <span class="switch-track"><span class="switch-knob"></span></span>
-            <span>Auto (usar la recomendación del manifest / nº de mods)</span>
-          </label>
-          <p id="ram-feedback" class="ram-feedback">—</p>
-        </div>
-
-        <div class="card glass form-grid">
-          <label>Java
-            <input id="set-java" placeholder="C:\...\bin\java.exe" />
-          </label>
-          <label class="switch">
-            <input type="checkbox" id="set-streamer" />
-            <span class="switch-track"><span class="switch-knob"></span></span>
-            <span>Modo streamer</span>
-          </label>
-          <label class="switch">
-            <input type="checkbox" id="set-auto" />
-            <span class="switch-track"><span class="switch-knob"></span></span>
-            <span>Actualizaciones automaticas</span>
-          </label>
-          <button class="btn primary" id="btn-save-settings">Guardar</button>
-        </div>
-
-        <div class="card glass">
-          <h2>Modo antilag</h2>
-          <p class="muted">Túnel Cloudflare WARP que cubre solo la conexión de Minecraft</p>
-          <label>
-            <input id="antilag-host" placeholder="ej. play.miservidor.com o 203.0.113.10" />
-          </label>
-          <div class="row">
-            <button class="btn primary" id="btn-antilag-install">Instalar modo antilag</button>
-            <label class="switch">
-              <input type="checkbox" id="antilag-enable" />
-              <span class="switch-track"><span class="switch-knob"></span></span>
-              <span>Activar al jugar</span>
-            </label>
-          </div>
-          <p id="antilag-status" class="status"></p>
-          <p id="antilag-hint" class="status"></p>
-        </div>
-
-        <div class="card glass">
-          <h2>Backups / Rollback</h2>
-          <p class="muted">Cada actualización crea un backup antes de aplicar cambios.</p>
-          <div class="form-grid">
-            <select id="rb-instance"></select>
-            <select id="rb-revision"></select>
-            <button class="btn danger" id="btn-rollback">Restaurar revisión</button>
-          </div>
-        </div>
-        <p id="settings-status" class="status"></p>
-      </section>
-
-      
-      <section id="page-console" class="page">
-        <h1>Consola</h1>
-        <div class="card glass">
-          <div class="row">
-            <button class="btn primary" id="btn-launch">Jugar</button>
-            <button class="btn danger" id="btn-kill">Detener</button>
-            <button class="btn" id="btn-copy-console">Copiar consola</button>
-            <button class="btn" id="btn-clear-console">Limpiar</button>
-            <span id="game-state" class="status"></span>
-          </div>
-        </div>
-        <pre id="console" class="console"></pre>
+        <p id="offline-status" class="status"></p>
       </section>
     </main>
   </div>

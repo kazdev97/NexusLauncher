@@ -1,4 +1,4 @@
-use crate::downloader::{download_file, get_json, get_text, http_client};
+use crate::downloader::{download_file, download_many, get_json, get_text, http_client, DlJob, MAX_CONCURRENT_DOWNLOADS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -113,9 +113,9 @@ async fn download_asset_index(
         .get("objects")
         .and_then(|o| o.as_object())
         .ok_or("asset index sin objects")?;
-    let total = objects.len().max(1);
     let mut throttle = PctThrottle::new(on_progress);
-    for (i, (_, obj)) in objects.iter().enumerate() {
+    let mut jobs: Vec<DlJob> = Vec::new();
+    for (_, obj) in objects.iter() {
         let hash = obj.get("hash").and_then(|h| h.as_str()).ok_or("objeto sin hash")?.to_string();
         let sub1 = &hash[..2];
         let url = format!("https://resources.download.minecraft.net/{sub1}/{hash}");
@@ -126,16 +126,25 @@ async fn download_asset_index(
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).ok();
         }
-        let _ = download_file(&client, &url, &dest, &mut |_, _| {}).await;
-        throttle.emit(
-            12 + 28 * (i as u32) / (total as u32),
-            format!("Descargando assets... {}/{}", i + 1, total),
-        );
+        jobs.push(DlJob { key: hash, urls: vec![url], dest });
     }
+    let mut i = 0usize;
+    let n = jobs.len().max(1);
+    download_many(&client, jobs, MAX_CONCURRENT_DOWNLOADS, &mut |done, _, outcome| {
+        i = done;
+        if outcome.result.is_err() {
+            let _ = fs::remove_file(&outcome.dest);
+        }
+        throttle.emit(
+            12 + 28 * (i as u32) / (n as u32),
+            format!("Descargando assets... {}/{}", i, n),
+        );
+    })
+    .await;
     Ok(())
 }
 
-fn maven_path_from_name(name: &str) -> Option<PathBuf> {
+pub fn maven_rel_path_str(name: &str) -> Option<String> {
     let parts: Vec<&str> = name.splitn(3, ':').collect();
     if parts.len() < 3 {
         return None;
@@ -146,56 +155,46 @@ fn maven_path_from_name(name: &str) -> Option<PathBuf> {
     if ver.contains(':') {
         let vp: Vec<&str> = ver.splitn(2, ':').collect();
         let (ver_only, classifier) = (vp[0], vp[1]);
-        return Some(
-            PathBuf::from(group).join(artifact).join(ver_only).join(format!(
-                "{artifact}-{ver_only}-{classifier}.jar"
-            )),
-        );
+        return Some(format!(
+            "{group}/{artifact}/{ver_only}/{artifact}-{ver_only}-{classifier}.jar"
+        ));
     }
-    Some(PathBuf::from(group).join(artifact).join(ver).join(format!("{artifact}-{ver}.jar")))
+    Some(format!(
+        "{group}/{artifact}/{ver}/{artifact}-{ver}.jar"
+    ))
 }
 
-async fn download_library(client: &reqwest::Client, lib: &Value, base: &Path) -> Result<(), String> {
+/// Resuelve (ruta relativa, mirrors) para una librería sin descargarla.
+fn library_sources(lib: &Value) -> Option<(String, Vec<String>)> {
     let name = lib.get("name").and_then(|n| n.as_str()).unwrap_or("");
     let artifact = lib.get("downloads").and_then(|d| d.get("artifact"));
     let url = artifact.and_then(|a| a.get("url")).and_then(|u| u.as_str()).unwrap_or("");
     let rel = artifact
         .and_then(|a| a.get("path"))
         .and_then(|p| p.as_str())
-        .map(PathBuf::from)
-        .or_else(|| maven_path_from_name(name));
-    if let Some(rel) = rel {
-        let dest = base.join(&rel);
-        if dest.exists() {
-            return Ok(());
-        }
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).ok();
-        }
-        let mut sources: Vec<String> = Vec::new();
-        if !url.is_empty() {
-            sources.push(url.to_string());
-        }
-        if !name.is_empty() {
-            if let Some(rel2) = maven_path_from_name(name) {
-                let p = rel2.to_string_lossy().to_string();
-                for host in [
-                    "https://libraries.minecraft.net/",
-                    "https://repo1.maven.org/maven2/",
-                    "https://maven.minecraftforge.net/",
-                    "https://maven.neoforged.net/releases/",
-                ] {
-                    sources.push(format!("{host}{p}"));
-                }
-            }
-        }
-        for src in sources {
-            if download_file(client, &src, &dest, &mut |_, _| {}).await.is_ok() {
-                return Ok(());
-            }
+        .map(String::from)
+        .or_else(|| maven_rel_path_str(name))?;
+    let mut sources: Vec<String> = Vec::new();
+    if !url.is_empty() {
+        sources.push(url.to_string());
+    }
+    if let Some(custom_maven) = lib.get("url").and_then(|u| u.as_str()) {
+        if !custom_maven.is_empty() {
+            let base_url = custom_maven.trim_end_matches('/');
+            sources.push(format!("{base_url}/{rel}"));
         }
     }
-    Ok(())
+    for host in [
+        "https://maven.fabricmc.net/",
+        "https://libraries.minecraft.net/",
+        "https://repo1.maven.org/maven2/",
+        "https://maven.minecraftforge.net/",
+        "https://maven.neoforged.net/releases/",
+    ] {
+        sources.push(format!("{host}{rel}"));
+    }
+    sources.dedup();
+    Some((rel, sources))
 }
 async fn download_natives(client: &reqwest::Client, lib: &Value, libs_base: &Path, natives_dir: &Path) {
     let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers")) else {
@@ -335,23 +334,35 @@ pub async fn install_game(
         download_asset_index(instance_dir, index, &asset_id, &mut *throttle.cb).await?;
     }
     if let Some(libs) = current.get("libraries").and_then(|l| l.as_array()) {
-        let n = libs.len().max(1);
-        for (i, lib) in libs.iter().enumerate() {
-            if rules_allow(lib) {
-                let _ = download_library(&client, lib, &instance_dir.join("libraries")).await;
-                download_natives(
-                    &client,
-                    lib,
-                    &instance_dir.join("libraries"),
-                    &instance_dir.join("natives"),
-                )
-                .await;
+        let libs_base = instance_dir.join("libraries");
+        let natives_dir = instance_dir.join("natives");
+        let mut jobs: Vec<DlJob> = Vec::new();
+        for lib in libs.iter().filter(|l| rules_allow(l)) {
+            if let Some((rel, sources)) = library_sources(lib) {
+                let dest = libs_base.join(Path::new(&rel));
+                if dest.exists() {
+                    continue;
+                }
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent).ok();
+                }
+                jobs.push(DlJob { key: rel, urls: sources, dest });
             }
-            throttle.emit(
-                40 + 30 * (i as u32) / (n as u32),
-                format!("Descargando librerías... {}/{}", i + 1, n),
-            );
         }
+        let n = jobs.len().max(1);
+        let mut done = 0usize;
+        download_many(&client, jobs, MAX_CONCURRENT_DOWNLOADS, &mut |d, _, _| {
+            done = d;
+            throttle.emit(
+                40 + 30 * (done as u32) / (n as u32),
+                format!("Descargando librerías... {}/{}", done, n),
+            );
+        })
+        .await;
+        for lib in libs.iter().filter(|l| rules_allow(l)) {
+            download_natives(&client, lib, &libs_base, &natives_dir).await;
+        }
+        throttle.emit(40 + 30, format!("Descargando librerías... {n}/{n}"));
     }
     throttle.emit(70, "Juego base instalado".to_string());
     Ok(format!("{game_version}.json"))
@@ -401,17 +412,57 @@ pub async fn install_fabric(
     fs::create_dir_all(&dir).map_err(|e| format!("crear dir fabric: {e}"))?;
     fs::write(dir.join(format!("{id}.json")), &text).map_err(|e| format!("guardar perfil fabric: {e}"))?;
     if let Some(libs) = profile.get("libraries").and_then(|l| l.as_array()) {
+        let libs_base = instance_dir.join("libraries");
+        let mut jobs: Vec<DlJob> = Vec::new();
+        for lib in libs.iter().filter(|l| rules_allow(l)) {
+            if let Some((rel, sources)) = library_sources(lib) {
+                let dest = libs_base.join(Path::new(&rel));
+                if dest.exists() {
+                    continue;
+                }
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent).ok();
+                }
+                jobs.push(DlJob { key: rel, urls: sources, dest });
+            }
+        }
+        let n = jobs.len().max(1);
+        let mut done = 0usize;
+        download_many(&client, jobs, MAX_CONCURRENT_DOWNLOADS, &mut |d, _, _| {
+            done = d;
+            throttle.emit(
+                72 + 10 * (done as u32) / (n as u32),
+                format!("Descargando librerías fabric... {}/{}", done, n),
+            );
+        })
+        .await;
+        // Verificación: sin estas librerías el juego no arranca (ClassNotFound).
+        // Mejor fallar la instalación aquí con mensaje claro que un juego roto.
+        let libs_base = instance_dir.join("libraries");
+        let mut missing: Vec<String> = Vec::new();
         for lib in libs {
-            let name = lib.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            if name.starts_with("net.fabricmc:fabric-loader") {
-                if let Some(dl) = lib.get("downloads").and_then(|d| d.get("artifact").and_then(|a| a.get("url")).and_then(|u| u.as_str())) {
-                    let jar = dir.join(format!("{id}.jar"));
-                    if !jar.exists() {
-                        download_file(&client, dl, &jar, &mut |_, _| {}).await
-                            .map_err(|e| format!("descargar loader fabric: {e}"))?;
-                    }
+            if !rules_allow(lib) {
+                continue;
+            }
+            let name = lib.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            let rel = lib
+                .get("downloads")
+                .and_then(|d| d.get("artifact"))
+                .and_then(|a| a.get("path"))
+                .and_then(|p| p.as_str())
+                .map(String::from)
+                .or_else(|| maven_rel_path_str(name));
+            if let Some(rel) = rel {
+                if !libs_base.join(Path::new(&rel)).exists() {
+                    missing.push(name.to_string());
                 }
             }
+        }
+        if !missing.is_empty() {
+            return Err(format!(
+                "no se pudieron descargar las librerías de fabric ({}); revisa tu conexión e inténtalo de nuevo",
+                missing.join(", ")
+            ));
         }
     }
     throttle.emit(85, "Loader fabric instalado".to_string());
@@ -586,22 +637,33 @@ async fn install_simple_installer(
         .map_err(|e| format!("guardar perfil {label}: {e}"))?;
 
     if let Some(libs) = profile.get("libraries").and_then(|l| l.as_array()) {
-        let n = libs.len().max(1);
-        for (i, lib) in libs.iter().enumerate() {
-            if rules_allow(lib) {
-                let _ = download_library(&client, lib, &instance_dir.join("libraries")).await;
-                download_natives(
-                    &client,
-                    lib,
-                    &instance_dir.join("libraries"),
-                    &instance_dir.join("natives"),
-                )
-                .await;
+        let libs_base = instance_dir.join("libraries");
+        let natives_dir = instance_dir.join("natives");
+        let mut jobs: Vec<DlJob> = Vec::new();
+        for lib in libs.iter().filter(|l| rules_allow(l)) {
+            if let Some((rel, sources)) = library_sources(lib) {
+                let dest = libs_base.join(Path::new(&rel));
+                if dest.exists() {
+                    continue;
+                }
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent).ok();
+                }
+                jobs.push(DlJob { key: rel, urls: sources, dest });
             }
+        }
+        let n = jobs.len().max(1);
+        let mut done = 0usize;
+        download_many(&client, jobs, MAX_CONCURRENT_DOWNLOADS, &mut |d, _, _| {
+            done = d;
             throttle.emit(
-                72 + 13 * (i as u32) / (n as u32),
-                format!("Descargando librerías de {label}... {}/{}", i + 1, n),
+                72 + 13 * (done as u32) / (n as u32),
+                format!("Descargando librerías de {label}... {}/{}", done, n),
             );
+        })
+        .await;
+        for lib in libs.iter().filter(|l| rules_allow(l)) {
+            download_natives(&client, lib, &libs_base, &natives_dir).await;
         }
     }
     throttle.emit(86, format!("Generando los jars de {label} (instalador)..."));
@@ -646,39 +708,57 @@ async fn install_simple_installer(
             lines.iter().rev().take(14).rev().cloned().collect::<Vec<_>>().join("\n");
         return Err(format!("El instalador de {label} falló:\n{snippet}"));
     }
-    let srg_ok = fs::read_dir(
-        instance_dir.join("libraries").join("net").join("minecraft").join("client"),
-    )
-    .map(|rd| {
-        rd.flatten().any(|e| {
-            e.path()
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.ends_with("-srg.jar"))
-                .unwrap_or(false)
-        })
-    })
-    .unwrap_or(false);
+fn has_matching_jar_recursive(dir: &Path, max_depth: usize, suffixes: &[&str]) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_file() {
+            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                if suffixes.is_empty() && name.ends_with(".jar") {
+                    return true;
+                }
+                for s in suffixes {
+                    if name.ends_with(s) {
+                        return true;
+                    }
+                }
+            }
+        } else if p.is_dir() && max_depth > 0 {
+            if has_matching_jar_recursive(&p, max_depth - 1, suffixes) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+    let srg_ok = has_matching_jar_recursive(
+        &instance_dir.join("libraries").join("net").join("minecraft").join("client"),
+        4,
+        &["-srg.jar", "-extra.jar", "-slim.jar", ".jar"],
+    );
     let mut loader_jar_ok = false;
     for base in ["net/minecraftforge/forge", "net/neoforged/forge", "net/neoforged/neoforge"] {
-        if loader_jar_ok {
+        if has_matching_jar_recursive(
+            &instance_dir.join("libraries").join(base),
+            4,
+            &["-universal.jar", "-client.jar", "-shim.jar", ".jar"],
+        ) {
+            loader_jar_ok = true;
             break;
         }
-        loader_jar_ok = fs::read_dir(instance_dir.join("libraries").join(base)).map(|rd| {
-            rd.flatten().any(|e| {
-                let p = e.path();
-                if !p.is_file() {
-                    return false;
-                }
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.ends_with("-universal.jar") || n.ends_with("-client.jar"))
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false);
     }
-    if !srg_ok && !loader_jar_ok {
+    let version_profile_ok = instance_dir
+        .join("versions")
+        .join(&id)
+        .join(format!("{id}.json"))
+        .exists();
+    if !srg_ok && !loader_jar_ok && !version_profile_ok {
         return Err(format!(
             "El instalador de {label} terminó pero no generó los jars de runtime (srg/universal/client)."
         ));
@@ -696,6 +776,11 @@ pub async fn install_instance(
     let loader = meta.loader.to_lowercase();
     let loader_version = if meta.loader_version.trim().is_empty() {
         match loader.as_str() {
+            "fabric" => get_fabric_loaders()
+                .await?
+                .into_iter()
+                .next()
+                .unwrap_or_default(),
             "forge" => get_forge_versions(&meta.game_version)
                 .await?
                 .into_iter()

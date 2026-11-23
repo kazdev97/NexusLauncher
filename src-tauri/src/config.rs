@@ -3,16 +3,97 @@ use std::fs;
 use std::path::{Path, PathBuf};
 pub const APP_NAME: &str = "NexusLauncher";
 pub const INSTANCE_META_FILE: &str = "kazu_instance.json";
+pub const DEFAULT_RESOURCE_PACKS: &[&str] = &[];
 pub const DEFAULT_SOURCE_URL: &str =
-    "https://raw.githubusercontent.com/kazdev97/Nexusmodpacks/main/index.json";
+    "https://raw.githubusercontent.com/kazdev97/Hallogeey/main/index.json";
+
+pub const OFFICIAL_SOURCE_URLS: &[&str] = &[
+    "https://raw.githubusercontent.com/kazdev97/Hallogeey/main/index.json",
+    "https://raw.githubusercontent.com/kazdev97/Paucalipsis-2/main/index.json",
+];
+
+fn candidate_dirs() -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(d) = dirs::document_dir() {
+        candidates.push(d.join(APP_NAME));
+    }
+    if let Some(d) = dirs::data_dir() {
+        candidates.push(d.join(APP_NAME));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.join(APP_NAME));
+        }
+    }
+    if let Some(d) = dirs::home_dir() {
+        candidates.push(d.join(APP_NAME));
+    }
+    candidates.push(PathBuf::from(".").join(APP_NAME));
+    candidates
+}
 
 pub fn launcher_data_dir() -> PathBuf {
-    let base = dirs::document_dir()
-        .or_else(dirs::home_dir)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join(APP_NAME);
-    fs::create_dir_all(&dir).ok();
-    dir
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let candidates = candidate_dirs();
+        for dir in &candidates {
+            if dir_is_usable(dir) {
+                return dir.clone();
+            }
+        }
+        candidates[0].clone()
+    })
+    .clone()
+}
+
+/// Lee un archivo de datos probando todas las ubicaciones y quedandose con el
+/// mas reciente, para no perder lo guardado en una carpeta de respaldo.
+fn read_newest(name: &str) -> Option<String> {
+    let mut best: Option<(std::time::SystemTime, String)> = None;
+    for dir in candidate_dirs() {
+        let path = dir.join(name);
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let stamp = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        if best.as_ref().map(|(s, _)| stamp > *s).unwrap_or(true) {
+            best = Some((stamp, text));
+        }
+    }
+    best.map(|(_, text)| text)
+}
+
+/// Guarda un archivo de datos probando todas las ubicaciones hasta que una
+/// funcione (Documentos puede estar redirigido a OneDrive o a una unidad caida).
+fn write_data_file(name: &str, text: &str) -> Result<(), String> {
+    let mut last_err = String::from("no hay ninguna carpeta disponible");
+    for dir in candidate_dirs() {
+        if !dir_is_usable(&dir) {
+            continue;
+        }
+        match fs::write(dir.join(name), text) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = format!("{}: {e}", dir.display()),
+        }
+    }
+    Err(last_err)
+}
+
+/// Comprueba que la carpeta se pueda crear y escribir de verdad. Si la ruta de
+/// Documentos esta redirigida a una unidad que no existe (OneDrive desconectado,
+/// disco extraible) create_dir_all falla con 'os error 3' y el guardado reventaba.
+fn dir_is_usable(dir: &Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(".write_probe");
+    if fs::write(&probe, b"ok").is_err() {
+        return false;
+    }
+    fs::remove_file(&probe).ok();
+    true
 }
 
 pub fn instances_dir() -> PathBuf {
@@ -37,6 +118,10 @@ pub fn settings_file() -> PathBuf {
 pub fn launcher_log_file() -> PathBuf {
     launcher_data_dir().join("nexuslauncher.log")
 }
+
+pub fn whitelist_file() -> PathBuf {
+    launcher_data_dir().join("whitelist.json")
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -54,6 +139,9 @@ pub struct Settings {
     pub antilag_enabled: bool,
     pub antilag_host: String,
     pub discord_rpc_enabled: bool,
+    /// Token de GitHub (solo owner). Se serializa a disco, pero `settings_get`
+    /// devuelve una copia saneada para no exponerlo al frontend.
+    pub github_token: String,
 }
 
 impl Default for Settings {
@@ -73,14 +161,14 @@ impl Default for Settings {
             antilag_enabled: false,
             antilag_host: String::new(),
             discord_rpc_enabled: true,
+            github_token: String::new(),
         }
     }
 }
 
 impl Settings {
     pub fn load() -> Self {
-        let path = settings_file();
-        if let Ok(text) = fs::read_to_string(&path) {
+        if let Some(text) = read_newest("settings.json") {
             if let Ok(s) = serde_json::from_str(&text) {
                 return s;
             }
@@ -89,10 +177,9 @@ impl Settings {
     }
 
     pub fn save(&self) -> Result<(), String> {
-        let path = settings_file();
         let json =
             serde_json::to_string_pretty(self).map_err(|e| format!("serialize settings: {e}"))?;
-        fs::write(&path, json).map_err(|e| format!("guardar settings: {e}"))
+        write_data_file("settings.json", &json).map_err(|e| format!("guardar settings: {e}"))
     }
     pub fn effective_ram_mb(&self) -> u32 {
         if self.max_ram_mb > 0 {
@@ -123,7 +210,7 @@ pub struct AccountStore {
 
 impl AccountStore {
     pub fn load() -> Self {
-        if let Ok(text) = fs::read_to_string(accounts_file()) {
+        if let Some(text) = read_newest("accounts.json") {
             if let Ok(store) = serde_json::from_str(&text) {
                 return store;
             }
@@ -139,7 +226,7 @@ impl AccountStore {
     pub fn save(&self) -> Result<(), String> {
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("serialize accounts: {e}"))?;
-        fs::write(accounts_file(), json).map_err(|e| format!("guardar cuentas: {e}"))
+        write_data_file("accounts.json", &json).map_err(|e| format!("guardar cuentas: {e}"))
     }
 
     pub fn selected(&self) -> Option<&Account> {

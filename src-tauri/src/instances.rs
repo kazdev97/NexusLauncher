@@ -66,6 +66,10 @@ pub struct InstanceInfo {
     pub last_launched: String,
     pub session_based: bool,
     pub remote: bool, // tiene manifest_url o carpeta de repo
+    /// Repo GitHub configurado para publicar/sincronizar ("owner/repo").
+    pub github_repo: String,
+    pub github_branch: String,
+    pub github_path: String,
 }
 
 pub fn instance_path(name: &str) -> PathBuf {
@@ -158,6 +162,18 @@ pub fn scan_instances() -> Vec<InstanceInfo> {
             };
             let installed = is_installed(&dir, &meta);
             let last_launched = fs::read_to_string(dir.join("last_launched.txt")).unwrap_or_default();
+            let (gh_repo, gh_branch, gh_path) = if !meta.github_repo.trim().is_empty() {
+                (meta.github_repo.clone(), meta.github_branch.clone(), meta.github_path.clone())
+            } else if let Some((r, b, p)) = crate::sync::parse_github_url(&meta.manifest_url) {
+                let mut updated = meta.clone();
+                updated.github_repo = r.clone();
+                updated.github_branch = b.clone();
+                updated.github_path = p.clone();
+                let _ = save_meta(&dir, &updated);
+                (r, b, p)
+            } else {
+                (String::new(), String::new(), String::new())
+            };
             results.push(InstanceInfo {
                 name,
                 version_id,
@@ -173,7 +189,10 @@ pub fn scan_instances() -> Vec<InstanceInfo> {
                 instance_dir: dir.to_string_lossy().to_string(),
                 last_launched,
                 session_based: false,
-                remote: !meta.manifest_url.trim().is_empty() || !meta.github_repo.trim().is_empty(),
+                remote: !meta.manifest_url.trim().is_empty() || !gh_repo.trim().is_empty(),
+                github_repo: gh_repo,
+                github_branch: gh_branch,
+                github_path: gh_path,
             });
         }
     }

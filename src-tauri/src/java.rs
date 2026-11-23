@@ -142,26 +142,75 @@ fn java_executable_in_dir(dir: &Path) -> Option<PathBuf> {
     }
     None
 }
+/// Limite de tiempo para `java -version`. Si un java.exe se queda colgado
+/// (antivirus escaneando, ejecutable corrupto, dialogo de Windows esperando)
+/// el launcher se quedaba para siempre en "Buscando el Java...".
+const JAVA_VERSION_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn run_java_version(exe: &Path, timeout: Duration) -> Result<String, String> {
+    let mut cmd = Command::new(exe);
+    cmd.arg("-version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no abrir consola
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("ejecutar java -version: {e}"))?;
+    let out_thread = child.stdout.take().map(|mut s| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+            buf
+        })
+    });
+    let err_thread = child.stderr.take().map(|mut s| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+            buf
+        })
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "java -version no respondio en {} segundos",
+                        timeout.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("esperar java -version: {e}")),
+        }
+    }
+    let mut out = String::new();
+    if let Some(t) = out_thread {
+        if let Ok(buf) = t.join() {
+            out.push_str(&String::from_utf8_lossy(&buf));
+        }
+    }
+    out.push('\n');
+    if let Some(t) = err_thread {
+        if let Ok(buf) = t.join() {
+            out.push_str(&String::from_utf8_lossy(&buf));
+        }
+    }
+    Ok(out)
+}
+
 pub fn validate_java_executable(exe: &Path, min_major: u32) -> Result<u32, String> {
     let java_cmd = if exe.to_string_lossy().to_lowercase().ends_with("javaw.exe") {
         exe.parent().unwrap().join("java.exe")
     } else {
         exe.to_path_buf()
     };
-    let mut cmd = Command::new(&java_cmd);
-    cmd.arg("-version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no abrir consola
-    let output = cmd
-        .output()
-        .map_err(|e| format!("ejecutar java -version: {e}"))?;
-    let out = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let out = run_java_version(&java_cmd, JAVA_VERSION_TIMEOUT)?;
     let lower = out.to_lowercase();
     if cfg!(target_os = "windows") && (lower.contains("32-bit") || lower.contains("32 bit")) {
         return Err("Java de 32 bits no es compatible".to_string());
@@ -177,13 +226,25 @@ pub fn validate_java_executable(exe: &Path, min_major: u32) -> Result<u32, Strin
     }
     Ok(major)
 }
+/// Las librerias nativas de AWT no se cargan con `java -version`, asi que un
+/// runtime incompleto (p.ej. awt.dll borrado por el antivirus) pasa la
+/// validacion de version pero crashea al iniciar el juego.
+pub fn runtime_is_complete(root: &Path) -> bool {
+    if !cfg!(target_os = "windows") {
+        return true;
+    }
+    let bin = root.join("bin");
+    ["awt.dll", "java.dll"]
+        .iter()
+        .all(|name| bin.join(name).exists())
+}
 pub fn find_bundled_java(major: u32) -> Option<PathBuf> {
     let root = runtime_dir().join(format!("jdk-{major}"));
     if !root.exists() {
         return None;
     }
     let exe = java_executable_in_dir(&root)?;
-    if validate_java_executable(&exe, major).is_ok() {
+    if validate_java_executable(&exe, major).is_ok() && runtime_is_complete(&root) {
         return Some(exe);
     }
     None
@@ -253,6 +314,9 @@ pub fn find_all_bundled_java() -> Vec<JavaInfo> {
             }
             if let Some(exe) = java_executable_in_dir(&dir) {
                 if let Ok(major) = validate_java_executable(&exe, 8) {
+                    if !runtime_is_complete(&dir) {
+                        continue;
+                    }
                     found.push(JavaInfo {
                         path: exe.to_string_lossy().to_string(),
                         major,
@@ -298,37 +362,94 @@ pub async fn install_adoptium(
         os = adoptium_os()
     );
     let client = http_client();
-    let assets: Vec<AdoptiumAsset> =
-        get_json(&client, &api, Duration::from_secs(60)).await?;
-    let asset = assets
-        .first()
-        .ok_or_else(|| "Adoptium no devolvió ningún JDK".to_string())?;
-    let link = asset.binary.package.link.clone();
-    let name = asset.binary.package.name.clone();
-    on_status(format!("Descargando {name}..."));
+    let mut sources: Vec<(String, String)> = Vec::new();
+    match get_json::<Vec<AdoptiumAsset>>(&client, &api, Duration::from_secs(60)).await {
+        Ok(assets) => match assets.first() {
+            Some(a) => sources.push((
+                a.binary.package.name.clone(),
+                a.binary.package.link.clone(),
+            )),
+            None => on_status("Adoptium no devolvió ningún JDK".to_string()),
+        },
+        Err(e) => on_status(format!("No se pudo consultar Adoptium ({e}); probando otro origen...")),
+    }
+    // Espejo alternativo (otro host) si Adoptium falla o entrega el zip corrupto.
+    if cfg!(target_os = "windows") {
+        sources.push((
+            format!("microsoft-jdk-{major}"),
+            format!("https://aka.ms/download-jdk/microsoft-jdk-{major}-windows-x64.zip"),
+        ));
+    }
+    if sources.is_empty() {
+        return Err("no hay ningún origen disponible para descargar el JDK".to_string());
+    }
     let tmp_dir = launcher_data_dir().join("_adoptium_tmp");
     if tmp_dir.exists() {
         fs::remove_dir_all(&tmp_dir).ok();
     }
     fs::create_dir_all(&tmp_dir).ok();
     let zip_path = tmp_dir.join(format!("jdk-{major}.zip"));
-    let mut downloaded = 0u64;
-    download_file(&client, &link, &zip_path, &mut |read, _total_dl| {
-        downloaded = read;
-        on_status(format!("Descargando JDK {major}... {downloaded} bytes"));
-    })
-    .await?;
-    on_status(format!("Extrayendo JDK {major}..."));
     let extract_dir = tmp_dir.join(format!("jdk-{major}"));
+    if extract_dir.exists() {
+        fs::remove_dir_all(&extract_dir).ok();
+    }
     fs::create_dir_all(&extract_dir).ok();
-    {
-        let file = fs::File::open(&zip_path)
-            .map_err(|e| format!("abrir zip adoptium: {e}"))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| format!("leer zip adoptium: {e}"))?;
-        archive
-            .extract(&extract_dir)
-            .map_err(|e| format!("extraer adoptium: {e}"))?;
+    // El zip puede llegar cortado o corrupto (conexion cortada, antivirus, proxy).
+    // Se reintenta la descarga y extraccion en vez de abortar con 'invalid zip archive'.
+    let mut last_err = "descarga fallida".to_string();
+    let mut ok = false;
+    'sources: for (name, link) in &sources {
+        last_err = format!("no se pudo descargar {name}");
+        for attempt in 1..=3 {
+            if attempt > 1 {
+                on_status(format!("Reintentando {name} ({attempt}/3)..."));
+            }
+            let mut downloaded = 0u64;
+            if let Err(e) = download_file(&client, link, &zip_path, &mut |read, _total_dl| {
+                downloaded = read;
+                on_status(format!("Descargando JDK {major}... {downloaded} bytes"));
+            })
+            .await
+            {
+                last_err = e;
+                continue;
+            }
+            let size = fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
+            if size < 4096 {
+                last_err = format!("el JDK descargado es demasiado pequeño ({size} bytes)");
+                fs::remove_file(&zip_path).ok();
+                continue;
+            }
+            on_status(format!("Extrayendo JDK {major}..."));
+            let extracted = (|| -> Result<(), String> {
+                let file = fs::File::open(&zip_path)
+                    .map_err(|e| format!("abrir zip adoptium: {e}"))?;
+                let mut archive = zip::ZipArchive::new(file)
+                    .map_err(|e| format!("leer zip adoptium: {e}"))?;
+                archive
+                    .extract(&extract_dir)
+                    .map_err(|e| format!("extraer adoptium: {e}"))?;
+                Ok(())
+            })();
+            match extracted {
+                Ok(()) => {
+                    ok = true;
+                    break 'sources;
+                }
+                Err(e) => {
+                    last_err = e;
+                    fs::remove_file(&zip_path).ok();
+                    if extract_dir.exists() {
+                        fs::remove_dir_all(&extract_dir).ok();
+                    }
+                    fs::create_dir_all(&extract_dir).ok();
+                }
+            }
+        }
+    }
+    if !ok {
+        fs::remove_dir_all(&tmp_dir).ok();
+        return Err(format!("no se pudo instalar Java {major}: {last_err}"));
     }
     let target_root = runtime_dir().join(format!("jdk-{major}"));
     if target_root.exists() {
@@ -346,6 +467,10 @@ pub async fn install_adoptium(
         .ok_or_else(|| "no se encontró java tras extraer Adoptium".to_string())?;
     let _actual = validate_java_executable(&exe, major)
         .map_err(|e| format!("JDK descargado inválido: {e}"))?;
+    if !runtime_is_complete(&target_root) {
+        fs::remove_dir_all(&target_root).ok();
+        return Err("El JDK descargado está incompleto (faltan librerías nativas)".to_string());
+    }
     on_status(format!("Java {major} listo en {}", target_root.display()));
     Ok(exe)
 }
@@ -356,6 +481,11 @@ pub async fn ensure_java(
 ) -> Result<PathBuf, String> {
     let required = resolve_java_major_online(mc_version, instance_dir).await;
     on_status(format!("Buscando Java {required}..."));
+    let bundled_root = runtime_dir().join(format!("jdk-{required}"));
+    if bundled_root.exists() && !runtime_is_complete(&bundled_root) {
+        on_status(format!("Java {required} dañado, reinstalando..."));
+        fs::remove_dir_all(&bundled_root).ok();
+    }
     if let Some(exe) = find_bundled_java(required) {
         return Ok(exe);
     }

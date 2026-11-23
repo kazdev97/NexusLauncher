@@ -1,5 +1,5 @@
 {
-  "version": "0.1.1",
-  "notes": "Sesión: renueva token al lanzar, relogin, consola y RAM 6-8 GB.",
+  "version": "0.1.2",
+  "notes": "Rediseño de interfaz: tema oscuro con aurora y cristal, nuevo logo Nexus, temas Ataplaygame y DoctoraPaula. Whitelist remota para staff y corrección del instalador de Forge.",
   "url": "https://raw.githubusercontent.com/kazdev97/NexusLauncher/main/builds/nexuslauncher.exe"
 }
