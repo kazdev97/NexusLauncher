@@ -164,6 +164,10 @@ async fn update_apply() -> Result<(), String> {
     updater::apply_update().await
 }
 #[tauri::command]
+fn update_log() -> String {
+    updater::read_log()
+}
+#[tauri::command]
 fn instances_list() -> Vec<instances::InstanceInfo> {
     instances::scan_instances()
 }
@@ -818,6 +822,7 @@ pub fn run() {
             auto_sync_apply,
             update_check,
             update_apply,
+            update_log,
             pack_export,
             pack_whitepaper,
             install_vanilla_versions,

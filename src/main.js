@@ -80,6 +80,7 @@ function demoCall(cmd) {
     instance_publish: () => "demo0000000000000000000000000000000",
     publisher_publish: () => "demo0000000000000000000000000000000",
     whitelist_sync_github: () => "Whitelist sincronizada en GitHub (modo demo).",
+    update_log: () => "(registro no disponible en modo demo)",
   };
   const fn = map[cmd];
   return Promise.resolve(fn ? fn() : undefined);
@@ -1599,6 +1600,25 @@ function checkLauncherUpdate() {
         try {
           await call("update_apply", {});
           chip.textContent = "instalando y reiniciando…";
+          // El instalador corre desconectado: si no logra cerrar/reiniciar, dar
+          // una salida visible con el registro en vez de dejar el chip colgado.
+          setTimeout(async () => {
+            if (chip.textContent !== "instalando y reiniciando…") return;
+            chip.textContent = "";
+            chip.append(ver);
+            const help = document.createElement("a");
+            help.href = "#";
+            help.className = "up";
+            help.textContent = " · no se pudo reiniciar, ver ayuda";
+            help.addEventListener("click", async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              let logTxt = "(sin registro)";
+              try { logTxt = (await call("update_log", {})) || logTxt; } catch (_) {}
+              showModal(`<h2>La actualización no terminó</h2><div class="group">El instalador no pudo reiniciar NexusLauncher. Descarga el ejecutable y reemplázalo manualmente.</div><p><a class="btn primary" href="${escapeHtml(info.download_url || "#")}" target="_blank" rel="noopener">Descargar manualmente</a></p><pre class="mono">${escapeHtml(String(logTxt).slice(-2500))}</pre>`);
+            });
+            chip.appendChild(help);
+          }, 20000);
         } catch (err) {
           chip.textContent = "";
           chip.append(ver);

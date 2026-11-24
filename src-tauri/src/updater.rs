@@ -50,6 +50,53 @@ pub fn version_gt(a: &str, b: &str) -> bool {
     }
     asuf > bsuf
 }
+fn updates_dir() -> std::path::PathBuf {
+    crate::config::launcher_data_dir().join("updates")
+}
+fn log_file() -> std::path::PathBuf {
+    updates_dir().join("update.log")
+}
+fn marker_file() -> std::path::PathBuf {
+    updates_dir().join("applied.json")
+}
+fn normalize_version(s: &str) -> String {
+    s.trim().to_lowercase().replace(['-', '_', ' '], "")
+}
+
+/// Devuelve las últimas líneas del registro del actualizador (para diagnosticar
+/// un reinicio que se queda colgado).
+pub fn read_log() -> String {
+    let text = fs::read_to_string(log_file()).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().rev().take(40).collect();
+    lines.into_iter().rev().collect::<Vec<_>>().join("\n")
+}
+
+/// Evita el bucle descargar -> reiniciar -> descargar: si ya aplicamos esta
+/// versión y el exe actual coincide con el que se descargó, no volver a ofrecerla.
+fn applied_marker_matches(version: &str) -> bool {
+    let Ok(text) = fs::read_to_string(marker_file()) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    let Some(v) = value.get("version").and_then(|x| x.as_str()) else {
+        return false;
+    };
+    if normalize_version(v) != normalize_version(version) {
+        return false;
+    }
+    let Some(expected) = value.get("sha256").and_then(|x| x.as_str()) else {
+        return false;
+    };
+    if let Ok(cur) = std::env::current_exe() {
+        if let Ok(actual) = crate::downloader::sha256_file(&cur) {
+            return actual.eq_ignore_ascii_case(expected);
+        }
+    }
+    false
+}
+
 pub async fn check_update() -> Result<UpdateInfo, String> {
     let client = http_client();
     let meta: RemoteMeta =
@@ -57,7 +104,10 @@ pub async fn check_update() -> Result<UpdateInfo, String> {
             format!("no se pudo consultar versiones ({UPDATE_METADATA_URL}): {e}")
         })?;
     let latest = meta.version.trim().to_string();
-    let available = !latest.is_empty() && version_gt(&latest, APP_VERSION);
+    let mut available = !latest.is_empty() && version_gt(&latest, APP_VERSION);
+    if available && applied_marker_matches(&latest) {
+        available = false;
+    }
     Ok(UpdateInfo {
         current: APP_VERSION.to_string(),
         latest,
@@ -73,9 +123,9 @@ pub async fn apply_update() -> Result<(), String> {
         return Err("No hay una versión más reciente para instalar.".to_string());
     }
 
-    let updates_dir = crate::config::launcher_data_dir().join("updates");
-    fs::create_dir_all(&updates_dir).map_err(|e| format!("crear carpeta de updates: {e}"))?;
-    let new_exe = updates_dir.join(format!("nexuslauncher-{}.new.exe", info.latest));
+    let dir = updates_dir();
+    fs::create_dir_all(&dir).map_err(|e| format!("crear carpeta de updates: {e}"))?;
+    let new_exe = dir.join(format!("nexuslauncher-{}.new.exe", info.latest.replace(['/', '\\', ':'], "_")));
     let client = http_client();
     download_file(&client, &info.download_url, &new_exe, &mut |_, _| {})
         .await
@@ -87,22 +137,74 @@ pub async fn apply_update() -> Result<(), String> {
         crate::downloader::sha256_file(&new_exe),
         crate::downloader::sha256_file(&cur_exe),
     ) {
-        if a == b {
+        if a.eq_ignore_ascii_case(&b) {
             fs::remove_file(&new_exe).ok();
             return Err("La actualización descargada es idéntica a la versión actual; se omite el reinicio.".to_string());
         }
     }
+
+    let new_hash = crate::downloader::sha256_file(&new_exe).unwrap_or_default();
+    fs::write(
+        marker_file(),
+        serde_json::json!({ "version": info.latest, "sha256": new_hash }).to_string(),
+    )
+    .ok();
+
+    let pid = std::process::id();
     let cur_str = cur_exe.to_string_lossy().replace('\'', "''");
     let new_str = new_exe.to_string_lossy().replace('\'', "''");
+    let log_str = log_file().to_string_lossy().replace('\'', "''");
+    let latest = info.latest.replace('\'', "''");
+    fs::write(
+        log_file(),
+        format!("Iniciando actualización a v{latest} (PID {pid})\n"),
+    )
+    .ok();
+
+    // Se detiene por PID (no por nombre: el usuario puede haber renombrado el
+    // exe), se espera a que suelte el archivo, se reintentan las copias y se
+    // escribe un registro para poder diagnosticar un reinicio fallido.
     let ps = format!(
-        "Start-Sleep -Seconds 3; $ErrorActionPreference='Stop'; \
-Stop-Process -Name 'nexuslauncher' -Force -ErrorAction SilentlyContinue; \
-Start-Sleep -Milliseconds 800; \
-Copy-Item -LiteralPath '{new_str}' -Destination '{cur_str}' -Force; \
-Remove-Item -LiteralPath '{new_str}' -Force -ErrorAction SilentlyContinue; \
-Start-Process -FilePath '{cur_str}'"
+        r#"$ErrorActionPreference = 'Stop'
+$log = '{log}'
+function Log {{
+  param($m)
+  Add-Content -LiteralPath $log -Value ("[{{0}}] {{1}}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m)
+}}
+Log 'Deteniendo el launcher (PID {pid})'
+Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
+for ($i = 0; $i -lt 30; $i++) {{
+  if (-not (Get-Process -Id {pid} -ErrorAction SilentlyContinue)) {{ break }}
+  Start-Sleep -Milliseconds 500
+}}
+Log 'Proceso detenido'
+$copied = $false
+for ($i = 0; $i -lt 20; $i++) {{
+  try {{
+    Copy-Item -LiteralPath '{new}' -Destination '{cur}' -Force -ErrorAction Stop
+    $copied = $true
+    break
+  }} catch {{
+    Start-Sleep -Milliseconds 500
+  }}
+}}
+if (-not $copied) {{ Log 'ERROR: no se pudo copiar el ejecutable'; exit 1 }}
+Log 'Ejecutable reemplazado'
+Remove-Item -LiteralPath '{new}' -Force -ErrorAction SilentlyContinue
+try {{
+  Start-Process -FilePath '{cur}'
+  Log 'Nueva instancia iniciada'
+}} catch {{
+  Log ('ERROR al iniciar: ' + $_.Exception.Message)
+  exit 1
+}}
+"#,
+        log = log_str,
+        pid = pid,
+        new = new_str,
+        cur = cur_str,
     );
-    let script = updates_dir.join("apply_update.ps1");
+    let script = dir.join("apply_update.ps1");
     fs::write(&script, &ps).map_err(|e| format!("escribir script de actualización: {e}"))?;
 
     let mut cmd = std::process::Command::new("powershell");
