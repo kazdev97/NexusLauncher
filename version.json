@@ -1,5 +1,5 @@
 {
-  "version": "0.1.4",
-  "notes": "Revisión visual con botón Guardar destacado, barra de ventana personalizada, diseño responsive y acceso Nexus Creators.",
+  "version": "0.1.4r",
+  "notes": "Revision 0.1.4r: puerta de acceso Nexus Creators con logo del estudio, controles de ventana y diseno responsive.",
   "url": "https://raw.githubusercontent.com/kazdev97/NexusLauncher/main/builds/nexuslauncher.exe"
 }
