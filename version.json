@@ -1,5 +1,5 @@
 {
-  "version": "0.1.3",
-  "notes": "Corrector de actualizaciones: reinicio por PID con reintentos y registro, marca anti-bucle y aviso si no se puede reiniciar. Mantiene el logo real y la interfaz rediseñada.",
+  "version": "0.1.3b",
+  "notes": "Barra de ventana personalizada con controles nativos, diseño responsive y acceso Nexus Creators con el símbolo limpio del estudio.",
   "url": "https://raw.githubusercontent.com/kazdev97/NexusLauncher/main/builds/nexuslauncher.exe"
 }
