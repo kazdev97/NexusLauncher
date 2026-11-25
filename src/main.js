@@ -81,13 +81,14 @@ function demoCall(cmd) {
     publisher_publish: () => "demo0000000000000000000000000000000",
     whitelist_sync_github: () => "Whitelist sincronizada en GitHub (modo demo).",
     update_log: () => "(registro no disponible en modo demo)",
+    auth_start: () => demoAccount,
   };
   const fn = map[cmd];
   return Promise.resolve(fn ? fn() : undefined);
 }
 
 const demoEvent = {
-  listen: (_name, _cb) => Promise.resolve(() => {}),
+  listen: (_name, _cb) => Promise.resolve(() => { }),
 };
 
 const consoleBuf = [];
@@ -159,14 +160,72 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
     }
     if (btn.dataset.page === "admin") { loadWhitelistUI(); loadPublishUI(); }
     if (btn.dataset.page === "settings") { loadSettings(); setupRam(); fillRollbackForm(); loadAntilag(); loadTokenStatus(); }
-    call("discord_set_page", { page: btn.dataset.page }).catch(() => {});
+    call("discord_set_page", { page: btn.dataset.page }).catch(() => { });
   });
 });
+let currentWindowMode = "gate";
+function getAppWindow() {
+  try {
+    return window.__TAURI__ && window.__TAURI__.window ? window.__TAURI__.window.getCurrentWindow() : null;
+  } catch (_) {
+    return null;
+  }
+}
+function logicalSize(w, h) {
+  const Ctor = (window.__TAURI__ && window.__TAURI__.window && window.__TAURI__.window.LogicalSize)
+    || (window.__TAURI__ && window.__TAURI__.dpi && window.__TAURI__.dpi.LogicalSize);
+  return Ctor ? new Ctor(w, h) : { type: "Logical", width: w, height: h };
+}
+async function setWindowMode(mode) {
+  const isGate = mode === "gate";
+  document.body.classList.toggle("gate-mode", isGate);
+  if (currentWindowMode === mode) return;
+  currentWindowMode = mode;
+  const win = getAppWindow();
+  if (!win) return;
+  try {
+    if (isGate) {
+      if (await win.isMaximized().catch(() => false)) {
+        await win.toggleMaximize().catch(() => { });
+      }
+      await win.setResizable(false);
+      await win.setMinSize(logicalSize(480, 420));
+      await win.setSize(logicalSize(960, 510));
+      await win.center();
+    } else {
+      await win.setResizable(true);
+      await win.setMinSize(logicalSize(980, 640));
+      await win.setSize(logicalSize(1180, 760));
+      await win.center();
+    }
+  } catch (_) { }
+}
+function setupWindowControls() {
+  const minimize = () => getAppWindow()?.minimize().catch(() => { });
+  const toggleMax = () => getAppWindow()?.toggleMaximize().catch(() => { });
+  const close = () => getAppWindow()?.close().catch(() => { });
+  if ($("gate-win-min")) $("gate-win-min").addEventListener("click", minimize);
+  if ($("gate-win-close")) $("gate-win-close").addEventListener("click", close);
+  if ($("app-win-min")) $("app-win-min").addEventListener("click", minimize);
+  if ($("app-win-max")) $("app-win-max").addEventListener("click", toggleMax);
+  if ($("app-win-close")) $("app-win-close").addEventListener("click", close);
+  document.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest("button, a, input, select, textarea, [data-no-drag]")) return;
+    if (!e.target.closest("[data-tauri-drag-region]")) return;
+    getAppWindow()?.startDragging().catch(() => { });
+  });
+}
+setupWindowControls();
+
 function showGate(msg) {
   const gate = $("login-gate");
   const app = $("app-shell");
+  const card = $("gate-card");
+  if (card) card.classList.remove("is-authenticating", "is-success", "is-exiting");
   if (gate) gate.classList.remove("hidden");
   if (app) app.classList.add("hidden");
+  setWindowMode("gate");
   if (msg) status("login-status", msg);
 }
 function hideGate() {
@@ -174,6 +233,7 @@ function hideGate() {
   const app = $("app-shell");
   if (gate) gate.classList.add("hidden");
   if (app) app.classList.remove("hidden");
+  setWindowMode("app");
 }
 function normUuid(u) {
   return (u || "").toLowerCase().replace(/-/g, "").trim();
@@ -251,16 +311,32 @@ function updateAccessUI() {
   applyLauncherTheme();
 }
 async function doMicrosoftLogin() {
+  const card = $("gate-card");
+  const gate = $("login-gate");
+  const isGateVisible = gate && !gate.classList.contains("hidden");
+  if (card && isGateVisible) card.classList.add("is-authenticating");
   status("login-status", "Iniciando sesión... Complete el login en el navegador.");
   status("login-status-2", "Iniciando sesión... Complete el login en el navegador.");
   try {
     const acc = await call("login_start", {});
-    status("login-status", "Sesión iniciada como " + (acc.name || acc.id));
-    status("login-status-2", "Sesión iniciada como " + (acc.name || acc.id));
+    const displayName = acc.name || acc.id;
+    status("login-status", "Sesión iniciada como " + displayName);
+    status("login-status-2", "Sesión iniciada como " + displayName);
+    if (card && isGateVisible) {
+      card.classList.remove("is-authenticating");
+      const label = $("gate-auth-label");
+      if (label) label.textContent = "Bienvenido, " + displayName;
+      card.classList.add("is-success");
+      await new Promise((r) => setTimeout(r, 750));
+      card.classList.add("is-exiting");
+      await new Promise((r) => setTimeout(r, 380));
+    }
     gateReady = true;
     await refreshLogin();
+    if (card) card.classList.remove("is-success", "is-exiting");
     loadInstances();
   } catch (e) {
+    if (card) card.classList.remove("is-authenticating", "is-success", "is-exiting");
     const m = (e.message || e) === "__MINECRAFT_NOT_OWNED__"
       ? "Esta cuenta de Microsoft no tiene Minecraft comprado."
       : "Login cancelado o fallido: " + e.message;
@@ -280,7 +356,7 @@ async function refreshLogin() {
       const navAvatar = $("nav-user-avatar");
       if (navAvatar) navAvatar.classList.add("hidden");
       currentUuid = "";
-      await loadWhitelist().catch(() => {});
+      await loadWhitelist().catch(() => { });
       return;
     }
     if (store.accounts && store.accounts.length > 0) {
@@ -345,7 +421,7 @@ async function refreshLogin() {
     $("nav-user").textContent = "Sin sesión";
     const navAvatar = $("nav-user-avatar");
     if (navAvatar) navAvatar.classList.add("hidden");
-    await loadWhitelist().catch(() => {});
+    await loadWhitelist().catch(() => { });
   } catch (e) {
     status("login-status", "Error al leer cuentas: " + e.message);
   }
@@ -405,7 +481,7 @@ function setThemeOverride(name, theme) {
   const map = getThemeOverrides();
   if (!theme || theme === "auto") delete map[name];
   else map[name] = theme;
-  try { localStorage.setItem("nexus_instance_themes", JSON.stringify(map)); } catch (e) {}
+  try { localStorage.setItem("nexus_instance_themes", JSON.stringify(map)); } catch (e) { }
 }
 function detectTheme(name) {
   const map = getThemeOverrides();
@@ -429,7 +505,7 @@ function getStaffThemePref() {
   return localStorage.getItem("nexus_staff_theme") || "auto";
 }
 function setStaffThemePref(v) {
-  try { localStorage.setItem("nexus_staff_theme", v); } catch (e) {}
+  try { localStorage.setItem("nexus_staff_theme", v); } catch (e) { }
 }
 
 function userOnlyHasAtaplayAccess() {
@@ -710,7 +786,7 @@ async function loadPublishUI() {
         const dir = await call("instance_get_local_dir", { name: inst.name });
         if (dir) await setPublishLocalPath(dir);
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 }
 
@@ -892,9 +968,11 @@ async function loadInstances() {
     return;
   }
   const list = $("instances-list");
+  const count = $("installed-count");
+  if (count) count.textContent = String(instances.length).padStart(2, "0");
   list.innerHTML = "";
   if (instances.length === 0) {
-    list.innerHTML = '<p class="muted">Sin instancias instaladas. Instala una de las disponibles arriba.</p>';
+    list.innerHTML = `<div class="empty-state">${uiIcon("library")}<div><b>Tu biblioteca está esperando</b><p>Instala una de las experiencias disponibles abajo para empezar a jugar.</p></div></div>`;
     return;
   }
   instances.forEach((inst) => list.appendChild(instanceCard(inst)));
@@ -923,9 +1001,7 @@ async function loadSource() {
     const url = (s.source_url || "").trim();
     const list = await call("source_fetch", { url: url || undefined });
     renderAvailable(list || []);
-    status("instances-status", (list && list.length)
-      ? `${list.length} instancias disponibles en la fuente.`
-      : "No hay instancias disponibles en la fuente.");
+    status("instances-status", "");
   } catch (e) {
     console.error("Error cargando instancias:", e);
     renderAvailable([]);
@@ -939,11 +1015,11 @@ if (refreshSourceBtn) {
     refreshSourceBtn.disabled = true;
     refreshSourceBtn.textContent = "Consultando...";
     try {
-      await loadWhitelist().catch(() => {});
+      await loadWhitelist().catch(() => { });
       await loadSource();
     } finally {
       refreshSourceBtn.disabled = false;
-      refreshSourceBtn.textContent = "🔄 Consultar";
+      refreshSourceBtn.innerHTML = `${uiIcon("refresh")}Actualizar catálogo`;
     }
   });
 }
@@ -954,30 +1030,32 @@ if (refreshInstancesBtn) {
     refreshInstancesBtn.disabled = true;
     refreshInstancesBtn.textContent = "Consultando...";
     try {
-      await loadWhitelist().catch(() => {});
+      await loadWhitelist().catch(() => { });
       await loadInstances();
       await runAutoSync(false);
     } finally {
       refreshInstancesBtn.disabled = false;
-      refreshInstancesBtn.textContent = "🔄 Consultar actualizaciones";
+      refreshInstancesBtn.innerHTML = `${uiIcon("refresh")}Buscar actualizaciones`;
     }
   });
 }
 
 function renderSourceStatus(msg) {
-  $("available-list").innerHTML = `<p class="muted">${escapeHtml(msg)}</p>`;
+  $("available-list").innerHTML = `<div class="empty-state compact"><span class="spinner"></span><p>${escapeHtml(msg)}</p></div>`;
 }
 
 function renderAvailable(list) {
   const el = $("available-list");
+  const count = $("available-count");
+  if (count) count.textContent = String(list.length).padStart(2, "0");
   el.innerHTML = "";
   if (list.length === 0) {
-    el.innerHTML = '<p class="muted">No hay instancias publicadas todavía.</p>';
+    el.innerHTML = `<div class="empty-state compact">${uiIcon("download")}<p>No hay instancias publicadas todavía.</p></div>`;
     return;
   }
   list.forEach((item) => {
     const card = document.createElement("div");
-    card.className = "instance-card";
+    card.className = "instance-card available-card";
     card.dataset.theme = detectTheme(item.name);
     const loader = item.loader || "vanilla";
     const meta = `${escapeHtml(loader)} ${escapeHtml(item.game_version || "?")}`
@@ -986,15 +1064,15 @@ function renderAvailable(list) {
     card.innerHTML = `
       <div class="icon">${escapeHtml((item.name || "?").charAt(0).toUpperCase())}</div>
       <div class="info">
-        <b>${escapeHtml(item.name)}</b>${themeChip(item.name)}
-        ${item.installed ? '<span class="badge install">instalada</span>' : ""}
+        <div class="instance-title"><b>${escapeHtml(item.name)}</b>${themeChip(item.name)}
+        ${item.installed ? '<span class="badge install">instalada</span>' : ""}</div>
         <div class="sub">${meta}</div>
-        ${item.description ? `<div class="sub">${escapeHtml(item.description)}</div>` : ""}
+        ${item.description ? `<div class="instance-description">${escapeHtml(item.description)}</div>` : ""}
       </div>
       <div class="actions">
         ${item.installed
-          ? '<button class="btn ghost small" disabled>instalado</button>'
-          : '<button class="btn mint small" data-install>Instalar</button>'}
+        ? `<button class="btn ghost small" disabled>${uiIcon("check")}Instalada</button>`
+        : `<button class="btn install-btn small" data-install>${uiIcon("download")}Instalar</button>`}
       </div>`;
     const btn = card.querySelector("[data-install]");
     if (btn) btn.addEventListener("click", () => installFromSource(item, btn));
@@ -1101,33 +1179,36 @@ async function runAutoSync(autoApply) {
 
 function instanceCard(inst) {
   const el = document.createElement("div");
-  el.className = "instance-card";
-  const badge = inst.installed ? (inst.last_launched ? "" : "")
-    : '<span class="badge outdated">no instalada</span>';
+  el.className = "instance-card installed-card";
+  const badge = inst.installed ? "" : '<span class="badge outdated">pendiente de instalar</span>';
   const allowed = canAccessInstance(inst.name);
   const dis = allowed ? "" : "disabled";
   const note = allowed ? "" : '<span class="badge outdated">sin acceso</span>';
   el.dataset.theme = detectTheme(inst.name);
   el.innerHTML = `
-    <div class="icon">${inst.name.charAt(0).toUpperCase()}</div>
+    <div class="icon">${escapeHtml(inst.name.charAt(0).toUpperCase())}</div>
     <div class="info">
-      <b>${escapeHtml(inst.name)}</b>${themeChip(inst.name)}${badge}${note}
-      <div class="sub">${escapeHtml(inst.loader)} ${escapeHtml(inst.game_version)}
-        ${inst.loader_version ? "· " + escapeHtml(inst.loader_version) : ""}
-        ${inst.manifest_url ? "· manifest: ajustado" : "· manifest: no configurado"}
-        ${inst.last_launched ? "· último: " + escapeHtml(inst.last_launched) : ""}
+      <div class="instance-title"><b>${escapeHtml(inst.name)}</b>${themeChip(inst.name)}${badge}${note}</div>
+      <div class="sub"><span>${escapeHtml(inst.loader)} ${escapeHtml(inst.game_version)}</span>
+        ${inst.loader_version ? `<span>· ${escapeHtml(inst.loader_version)}</span>` : ""}
+        <span>· ${inst.manifest_url ? "sincronización activa" : "instalación local"}</span>
       </div>
+      ${inst.last_launched ? `<div class="instance-description">Última partida: ${escapeHtml(inst.last_launched)}</div>` : ""}
     </div>
     <div class="actions">
-      ${!inst.installed ? `<button class="btn mint small" data-act="install" ${dis}>Instalar</button>` : ''}
-      <button class="btn lila small" data-act="check" ${dis}>Actualizar</button>
-      <button class="btn lila small" data-act="launch" ${dis}>Jugar</button>
-      <button class="btn ghost small" data-act="delete" ${dis}>Eliminar</button>
+      ${inst.installed ? `
+        <button class="btn ghost small" data-act="check" ${dis}>${uiIcon("refresh")}<span>Actualizar</span></button>
+        <button class="btn danger icon-btn" data-act="delete" ${dis} title="Eliminar instancia" aria-label="Eliminar ${escapeHtml(inst.name)}">${uiIcon("trash")}</button>
+        <button class="btn primary launch-btn" data-act="launch" ${dis}>${uiIcon("play")}<span>Jugar</span></button>
+      ` : `
+        <button class="btn danger icon-btn" data-act="delete" ${dis} title="Eliminar instancia" aria-label="Eliminar ${escapeHtml(inst.name)}">${uiIcon("trash")}</button>
+        <button class="btn primary launch-btn" data-act="install" ${dis}>${uiIcon("download")}<span>Instalar</span></button>
+      `}
     </div>`;
   const btnInstall = el.querySelector('[data-act="install"]');
   if (btnInstall) btnInstall.addEventListener("click", () => installInstance(inst));
-  el.querySelector('[data-act="check"]').addEventListener("click", () => checkUpdates(inst));
-  el.querySelector('[data-act="launch"]').addEventListener("click", () => launchInstance(inst));
+  el.querySelector('[data-act="check"]')?.addEventListener("click", () => checkUpdates(inst));
+  el.querySelector('[data-act="launch"]')?.addEventListener("click", () => launchInstance(inst));
   el.querySelector('[data-act="delete"]').addEventListener("click", async () => {
     if (!confirm(`¿Eliminar la instancia '${inst.name}' y todos sus archivos?`)) return;
     try {
@@ -1136,6 +1217,10 @@ function instanceCard(inst) {
     } catch (e) { status("instances-status", e.message); }
   });
   return el;
+}
+
+function uiIcon(name, className = "") {
+  return `<svg class="ui-icon ${className}" aria-hidden="true"><use href="#icon-${name}"/></svg>`;
 }
 
 function escapeHtml(s) {
@@ -1197,8 +1282,8 @@ function showDiffModal(inst, diff) {
     try {
       const res = await call("sync_apply", { name: inst.name });
       const msg = [`Aplicado (revisión ${res.applied_revision || "n/a"}).`,
-        `Añadidos: ${res.downloaded.length}, reemplazados: ${res.replaced.length}, eliminados: ${res.removed.length}.`,
-        res.backup_dir ? `Backup: ${res.backup_dir}` : ""].join("\n");
+      `Añadidos: ${res.downloaded.length}, reemplazados: ${res.replaced.length}, eliminados: ${res.removed.length}.`,
+      res.backup_dir ? `Backup: ${res.backup_dir}` : ""].join("\n");
       showModal(`<h2>Actualización aplicada</h2><pre class="mono small">${escapeHtml(msg)}</pre>`);
       if (res.errors && res.errors.length) showModal(`<h2>Errores parciales</h2><pre class="mono">${escapeHtml(res.errors.join("\n"))}</pre>`);
       loadInstances();
@@ -1361,7 +1446,7 @@ async function setupRam() {
         ramRec.min_mb = r.min_mb || ramRec.min_mb;
         ramRec.max_mb = r.max_mb || ramRec.max_mb;
         ramRec.total_ram_gb = r.total_ram_gb || ramRec.total_ram_gb;
-      } catch (e) {}
+      } catch (e) { }
     }
     const s = await getSettings();
     const slider = $("ram-slider");
@@ -1439,7 +1524,7 @@ async function loadBackups(name) {
       o.textContent = r;
       sel.appendChild(o);
     });
-  } catch (e) {}
+  } catch (e) { }
 }
 
 $("btn-rollback").addEventListener("click", async () => {
@@ -1552,7 +1637,7 @@ if (donateBtn) {
       window.open(url, "_blank");
     } else {
       call("open_url", { url }).catch((e) => {
-        try { window.open(url, "_blank"); } catch (_) {}
+        try { window.open(url, "_blank"); } catch (_) { }
       });
     }
   });
@@ -1566,7 +1651,7 @@ function initTheme() {
     } else {
       document.body.classList.remove("dark");
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 const themeToggle = $("theme-toggle");
@@ -1575,7 +1660,7 @@ if (themeToggle) {
     const isDark = document.body.classList.toggle("dark");
     try {
       localStorage.setItem("nexus_theme", isDark ? "dark" : "light");
-    } catch (_) {}
+    } catch (_) { }
   });
 }
 function checkLauncherUpdate() {
@@ -1614,7 +1699,7 @@ function checkLauncherUpdate() {
               e.preventDefault();
               e.stopPropagation();
               let logTxt = "(sin registro)";
-              try { logTxt = (await call("update_log", {})) || logTxt; } catch (_) {}
+              try { logTxt = (await call("update_log", {})) || logTxt; } catch (_) { }
               showModal(`<h2>La actualización no terminó</h2><div class="group">El instalador no pudo reiniciar NexusLauncher. Descarga el ejecutable y reemplázalo manualmente.</div><p><a class="btn primary" href="${escapeHtml(info.download_url || "#")}" target="_blank" rel="noopener">Descargar manualmente</a></p><pre class="mono">${escapeHtml(String(logTxt).slice(-2500))}</pre>`);
             });
             chip.appendChild(help);
@@ -1643,7 +1728,7 @@ function checkLauncherUpdate() {
           chip.appendChild(note);
           await apply();
         }
-      } catch (_) {}
+      } catch (_) { }
     }
   }).catch((err) => {
     chip.textContent = `NexusLauncher v${DEMO ? "0.1.0" : "?"} · sin conexión`;
@@ -1652,16 +1737,16 @@ function checkLauncherUpdate() {
 }
 initTheme();
 // Consultar automáticamente instancias disponibles y locales de inmediato al abrir el launcher
-loadInstances().catch(() => {});
-loadSource().catch(() => {});
-runAutoSync(true).catch(() => {});
+loadInstances().catch(() => { });
+loadSource().catch(() => { });
+runAutoSync(true).catch(() => { });
 
 refreshLogin().then(() => {
   loadWhitelist().then(() => {
-    loadInstances().catch(() => {});
-    loadSource().catch(() => {});
-    runAutoSync(true).catch(() => {});
-  }).catch(() => {});
-}).catch(() => {});
+    loadInstances().catch(() => { });
+    loadSource().catch(() => { });
+    runAutoSync(true).catch(() => { });
+  }).catch(() => { });
+}).catch(() => { });
 checkLauncherUpdate();
-call("discord_set_page", { page: "login" }).catch(() => {});
+call("discord_set_page", { page: "login" }).catch(() => { });
