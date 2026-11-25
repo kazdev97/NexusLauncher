@@ -25,9 +25,9 @@ struct RemoteMeta {
     #[serde(default)]
     url: String,
 }
-/// Compara versiones como "0.1.2", "0.1.2r" o "0.1.2-r".
+/// Compara versiones como "0.1.2", "0.1.2r", "0.1.2-r" o "0.1.4beta".
 /// Los guiones se ignoran para que "0.1.2-r" == "0.1.2r" (evita bucle de
-/// actualización), y el sufijo alfabético se usa como revisión: sin sufijo < "r".
+/// actualización). El sufijo se ordena por revisión: sin sufijo < "r" < "beta"/"b".
 pub fn version_gt(a: &str, b: &str) -> bool {
     fn parse(s: &str) -> (Vec<i64>, String) {
         let norm = s.trim().to_lowercase().replace(['-', '_', ' '], "");
@@ -38,6 +38,14 @@ pub fn version_gt(a: &str, b: &str) -> bool {
         let suffix = norm.chars().filter(|c| c.is_ascii_alphabetic()).collect();
         (nums, suffix)
     }
+    fn rank(suffix: &str) -> u8 {
+        match suffix {
+            "" => 0,
+            "r" => 1,
+            "b" | "beta" => 2,
+            _ => 3,
+        }
+    }
     let (an, asuf) = parse(a);
     let (bn, bsuf) = parse(b);
     let n = an.len().max(bn.len());
@@ -47,6 +55,10 @@ pub fn version_gt(a: &str, b: &str) -> bool {
         if x != y {
             return x > y;
         }
+    }
+    let (ar, br) = (rank(&asuf), rank(&bsuf));
+    if ar != br {
+        return ar > br;
     }
     asuf > bsuf
 }
@@ -238,5 +250,10 @@ mod tests {
         assert!(!version_gt("0.1.2r", "0.1.2-r"));
         assert!(version_gt("0.1.3", "0.1.2r"));
         assert!(!version_gt("0.1.2", "0.1.2r"));
+        assert!(version_gt("0.1.4beta", "0.1.4r"));
+        assert!(version_gt("0.1.4-beta", "0.1.4r"));
+        assert!(version_gt("0.1.4b", "0.1.4r"));
+        assert!(!version_gt("0.1.4r", "0.1.4beta"));
+        assert!(!version_gt("0.1.4beta", "0.1.4-beta"));
     }
 }

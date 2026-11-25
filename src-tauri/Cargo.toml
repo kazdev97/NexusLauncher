@@ -1,6 +1,6 @@
 [package]
 name = "nexuslauncher"
-version = "0.1.4-r"
+version = "0.1.4-beta"
 description = "NexusLauncher - launcher de Minecraft con control de instancias para el owner"
 authors = ["Kaz"]
 edition = "2021"
