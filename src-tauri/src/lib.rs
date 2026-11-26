@@ -1,5 +1,7 @@
 pub mod antilag;
 pub mod auth;
+mod api;
+mod vps_instances;
 pub mod config;
 pub mod downloader;
 pub mod instances;
@@ -788,6 +790,43 @@ async fn uuid_lookup(name: String) -> Result<UuidLookup, String> {
     })
 }
 
+#[tauri::command]
+fn set_window_mode(window: tauri::WebviewWindow, mode: String) -> Result<(), String> {
+    let mut max_w = 1920.0_f64;
+    let mut max_h = 1080.0_f64;
+    if let Ok(Some(monitor)) = window.current_monitor() {
+        let scale = monitor.scale_factor();
+        let size = monitor.size();
+        max_w = (size.width as f64) / scale;
+        max_h = (size.height as f64) / scale;
+    }
+    if mode == "gate" {
+        if window.is_maximized().unwrap_or(false) {
+            let _ = window.unmaximize();
+        }
+        let target_w = 960.0_f64.min((max_w * 0.92).floor());
+        let target_h = 510.0_f64.min((max_h * 0.88).floor());
+        let _ = window.set_resizable(false);
+        let _ = window.set_min_size(Some(tauri::LogicalSize::new(
+            480.0_f64.min(target_w),
+            400.0_f64.min(target_h),
+        )));
+        let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
+        let _ = window.center();
+    } else {
+        let target_w = 1180.0_f64.min((max_w * 0.94).floor());
+        let target_h = 760.0_f64.min((max_h * 0.92).floor());
+        let _ = window.set_resizable(true);
+        let _ = window.set_min_size(Some(tauri::LogicalSize::new(
+            980.0_f64.min(target_w),
+            640.0_f64.min(target_h),
+        )));
+        let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
+        let _ = window.center();
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     discord::init(true);
@@ -859,6 +898,7 @@ pub fn run() {
             whitelist_remove_staff,
             whitelist_sync_github,
             uuid_lookup,
+            set_window_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar NexusLauncher");

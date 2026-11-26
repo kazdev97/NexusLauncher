@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,19 +8,54 @@
   <link rel="icon" type="image/png" href="assets/logo.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body class="cyber">
+
+<body class="cyber gate-mode">
   <svg class="svg-sprite" aria-hidden="true">
-    <symbol id="icon-library" viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h4A1.5 1.5 0 0 1 11 5.5v4A1.5 1.5 0 0 1 9.5 11h-4A1.5 1.5 0 0 1 4 9.5v-4Zm9 0A1.5 1.5 0 0 1 14.5 4h4A1.5 1.5 0 0 1 20 5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4A1.5 1.5 0 0 1 13 9.5v-4Zm-9 9A1.5 1.5 0 0 1 5.5 13h4a1.5 1.5 0 0 1 1.5 1.5v4A1.5 1.5 0 0 1 9.5 20h-4A1.5 1.5 0 0 1 4 18.5v-4Zm9 0a1.5 1.5 0 0 1 1.5-1.5h4a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5h-4a1.5 1.5 0 0 1-1.5-1.5v-4Z"/></symbol>
-    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
-    <symbol id="icon-settings" viewBox="0 0 24 24"><path d="m9.6 3.3.5-1.3h3.8l.5 1.3 1.2.7 1.4-.2 1.9 3.3-1 1v1.5l1 1-1.9 3.3-1.4-.2-1.2.7-.5 1.3h-3.8l-.5-1.3-1.2-.7-1.4.2-1.9-3.3 1-1V8.1l-1-1L8.1 3.8l1.4.2 1.1-.7ZM12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></symbol>
-    <symbol id="icon-terminal" viewBox="0 0 24 24"><path d="M4 5h16v14H4V5Zm3 4 3 3-3 3m5 0h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="icon-user" viewBox="0 0 24 24"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm-8 9a8 8 0 0 1 16 0H4Z"/></symbol>
-    <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 2 20 5v6c0 5.2-3.4 9.1-8 11-4.6-1.9-8-5.8-8-11V5l8-3Zm-3 9 2.2 2.2L15.5 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5m10.1-4A8 8 0 0 0 5.3 6.3L4 8m16 8-1.3 1.7A8 8 0 0 1 4.9 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 3h6l1 4H8l1-4Zm-3 4 1 14h10l1-14M10 11v6m4-6v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="icon-sun" viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0-5v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M19 5l-1.5 1.5m-11 11L5 19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="icon-library" viewBox="0 0 24 24">
+      <path
+        d="M4 5.5A1.5 1.5 0 0 1 5.5 4h4A1.5 1.5 0 0 1 11 5.5v4A1.5 1.5 0 0 1 9.5 11h-4A1.5 1.5 0 0 1 4 9.5v-4Zm9 0A1.5 1.5 0 0 1 14.5 4h4A1.5 1.5 0 0 1 20 5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4A1.5 1.5 0 0 1 13 9.5v-4Zm-9 9A1.5 1.5 0 0 1 5.5 13h4a1.5 1.5 0 0 1 1.5 1.5v4A1.5 1.5 0 0 1 9.5 20h-4A1.5 1.5 0 0 1 4 18.5v-4Zm9 0a1.5 1.5 0 0 1 1.5-1.5h4a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5h-4a1.5 1.5 0 0 1-1.5-1.5v-4Z" />
+    </symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24">
+      <path d="m8 5 11 7-11 7V5Z" />
+    </symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24">
+      <path
+        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+        fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8" />
+    </symbol>
+    <symbol id="icon-terminal" viewBox="0 0 24 24">
+      <path d="M4 5h16v14H4V5Zm3 4 3 3-3 3m5 0h5" fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24">
+      <path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm-8 9a8 8 0 0 1 16 0H4Z" />
+    </symbol>
+    <symbol id="icon-shield" viewBox="0 0 24 24">
+      <path d="M12 2 20 5v6c0 5.2-3.4 9.1-8 11-4.6-1.9-8-5.8-8-11V5l8-3Zm-3 9 2.2 2.2L15.5 9" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24">
+      <path d="M20 7v5h-5M4 17v-5h5m10.1-4A8 8 0 0 0 5.3 6.3L4 8m16 8-1.3 1.7A8 8 0 0 1 4.9 16" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24">
+      <path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4" fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24">
+      <path d="M4 7h16M9 3h6l1 4H8l1-4Zm-3 4 1 14h10l1-14M10 11v6m4-6v6" fill="none" stroke="currentColor"
+        stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24">
+      <path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round" />
+    </symbol>
+    <symbol id="icon-sun" viewBox="0 0 24 24">
+      <path
+        d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0-5v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M19 5l-1.5 1.5m-11 11L5 19"
+        fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+    </symbol>
   </svg>
   <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
   <!-- ═══ Decoración navideña (solo tema ataplay) ═══ -->
@@ -29,45 +65,96 @@
 
   <!-- ═══ LOGIN GATE ═══ -->
   <div id="login-gate" class="login-gate">
-    <div class="gate-grid" aria-hidden="true"></div>
-    <div class="gate-card">
-      <div class="gate-showcase">
+    <div class="gate-card" id="gate-card" data-tauri-drag-region>
+      <div class="gate-window-controls" data-no-drag>
+        <button type="button" class="win-btn win-min" id="gate-win-min" title="Minimizar" aria-label="Minimizar">
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+        </button>
+        <button type="button" class="win-btn win-close" id="gate-win-close" title="Cerrar" aria-label="Cerrar">
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+      <div class="gate-showcase" data-tauri-drag-region>
         <span class="gate-edition">NEXUS CREATORS · LAUNCHER</span>
-        <div class="gate-logo"><img src="assets/logo.png" alt="Nexus Creators" /></div>
+        <div class="gate-logo"><img src="assets/logo nex.png" alt="Nexus Creators" /></div>
         <div class="gate-scanline" aria-hidden="true"></div>
         <span class="gate-version">MINECRAFT / JAVA EDITION</span>
       </div>
-      <div class="gate-content">
+      <div class="gate-content" data-tauri-drag-region>
         <div class="gate-kicker"><span class="live-dot"></span> Acceso por whitelist</div>
         <h1 class="gate-title">Nexus<br /><span>Creators</span></h1>
         <p class="gate-sub">Inicia sesión con Microsoft para comprobar a que instancias tienes acceso</p>
-        <button class="btn primary cyber-btn" id="btn-login"><svg class="ui-icon"><use href="#icon-user"/></svg>Iniciar sesión con Microsoft</button>
+        <button class="btn primary cyber-btn" id="btn-login"><svg class="ui-icon">
+            <use href="#icon-user" />
+          </svg>Iniciar sesión con Microsoft</button>
         <p id="login-status" class="status gate-status"></p>
-        <p class="gate-foot"><svg class="ui-icon"><use href="#icon-shield"/></svg>Comprobamos tu UUID contra la whitelist</p>
+        <p class="gate-foot"><svg class="ui-icon">
+            <use href="#icon-shield" />
+          </svg>Comprobamos tu UUID contra la whitelist</p>
+      </div>
+      <div class="gate-auth-overlay" id="gate-auth-overlay" aria-hidden="true">
+        <div class="gate-auth-ring">
+          <svg class="gate-auth-check" viewBox="0 0 24 24">
+            <path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
+              stroke-linejoin="round" />
+          </svg>
+        </div>
+        <div class="gate-auth-label" id="gate-auth-label">Sesión iniciada</div>
       </div>
     </div>
   </div>
 
   <!-- ═══ APP (visible tras login) ═══ -->
   <div class="app hidden" id="app-shell">
-    <nav class="sidebar" aria-label="Navegación principal">
-      <div class="brand"><a class="brand-logo" href="https://github.com/kazdev97/NexusLauncher" target="_blank" rel="noopener" aria-label="NexusLauncher en GitHub"><img src="assets/icono.png" alt="" /></a><div class="brand-name">nexus<span>launcher</span><small>MINECRAFT</small></div></div>
+    <nav class="sidebar" aria-label="Navegación principal" data-tauri-drag-region>
+      <div class="brand"><a class="brand-logo" id="brand-logo-link" href="https://nexuscreatorsjr.pages.dev/"
+          target="_blank" rel="noopener" aria-label="Nexus Creators" title="Nexus Creators"><img
+            src="assets/logo nex.png" alt="Nexus Creators" /></a>
+        <div class="brand-name">Nexus<span>Launcher</span></div>
+      </div>
       <div class="nav-items">
-        <button class="nav-item active" data-page="instances"><svg class="ui-icon"><use href="#icon-library"/></svg><span>Instancias</span></button>
-        <button class="nav-item hidden" data-page="admin" id="nav-admin"><svg class="ui-icon"><use href="#icon-shield"/></svg><span>Admin</span></button>
-        <button class="nav-item" data-page="settings"><svg class="ui-icon"><use href="#icon-settings"/></svg><span>Ajustes</span></button>
-        <button class="nav-item" data-page="console"><svg class="ui-icon"><use href="#icon-terminal"/></svg><span>Consola</span></button>
-        <button class="nav-item" data-page="login"><svg class="ui-icon"><use href="#icon-user"/></svg><span>Cuenta</span></button>
+        <button class="nav-item active" data-page="instances"><svg class="ui-icon">
+            <use href="#icon-library" />
+          </svg><span>Instancias</span></button>
+        <button class="nav-item hidden" data-page="admin" id="nav-admin"><svg class="ui-icon">
+            <use href="#icon-shield" />
+          </svg><span>Admin</span></button>
+        <button class="nav-item" data-page="settings"><svg class="ui-icon">
+            <use href="#icon-settings" />
+          </svg><span>Ajustes</span></button>
+        <button class="nav-item" data-page="console"><svg class="ui-icon">
+            <use href="#icon-terminal" />
+          </svg><span>Consola</span></button>
       </div>
       <div class="nav-footer">
-        <button id="theme-toggle" class="theme-toggle-btn" title="Cambiar brillo" aria-label="Cambiar brillo"><svg class="ui-icon"><use href="#icon-sun"/></svg></button>
+        <button id="theme-toggle" class="theme-toggle-btn" title="Cambiar brillo" aria-label="Cambiar brillo"><svg
+            class="ui-icon">
+            <use href="#icon-sun" />
+          </svg></button>
         <button id="donate-btn" class="donate-btn">
           <img src="https://storage.ko-fi.com/cdn/logomarkLogo.png" alt="Ko-fi" width="22" height="22" />
           <span>Donar</span>
         </button>
-        <div id="nav-user-container" class="nav-user-card" title="Ver cuenta">
+        <div id="nav-user-container" class="nav-user-card" title="Ver cuenta" role="button" tabindex="0" data-no-drag
+          data-tauri-drag-region="false">
           <img id="nav-user-avatar" class="nav-user-avatar hidden" src="" alt="Avatar" />
           <span id="nav-user" class="nav-user">Sin sesión</span>
+        </div>
+        <div class="window-controls app-window-controls" data-no-drag>
+          <button type="button" class="win-btn win-min" id="app-win-min" title="Minimizar" aria-label="Minimizar">
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+          </button>
+          <button type="button" class="win-btn win-close" id="app-win-close" title="Cerrar" aria-label="Cerrar">
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+          </button>
         </div>
       </div>
     </nav>
@@ -92,24 +179,38 @@
 
         <section class="library-section" id="installed-section">
           <div class="library-heading">
-            <div><span class="section-index">01</span><h2>Listas para jugar</h2><span class="section-count" id="installed-count">0</span></div>
-            <button class="btn small ghost" id="btn-refresh-instances" type="button"><svg class="ui-icon"><use href="#icon-refresh"/></svg>Buscar actualizaciones</button>
+            <div><span class="section-index">01</span>
+              <h2>Listas para jugar</h2><span class="section-count" id="installed-count">0</span>
+            </div>
+            <button class="btn small ghost" id="btn-refresh-instances" type="button"><svg class="ui-icon">
+                <use href="#icon-refresh" />
+              </svg>Buscar actualizaciones</button>
           </div>
-          <div id="instances-list" class="list"><div class="loading"><span class="spinner"></span> Preparando tu biblioteca…</div></div>
+          <div id="instances-list" class="list">
+            <div class="loading"><span class="spinner"></span> Preparando tu biblioteca…</div>
+          </div>
         </section>
 
         <div class="card glass hidden" id="install-progress">
-          <div class="progress-track"><div class="progress-fill" id="install-fill"></div></div>
+          <div class="progress-track">
+            <div class="progress-fill" id="install-fill"></div>
+          </div>
           <p id="install-text" class="muted">Instalando...</p>
         </div>
         <div id="updates-banner" class="card glass hidden"></div>
 
         <section class="library-section available-section">
           <div class="library-heading">
-            <div><span class="section-index">02</span><h2>Disponibles en Nexus</h2><span class="section-count" id="available-count">0</span></div>
-            <button class="btn small ghost" id="btn-refresh-source" type="button"><svg class="ui-icon"><use href="#icon-refresh"/></svg>Actualizar catálogo</button>
+            <div><span class="section-index">02</span>
+              <h2>Disponibles en Nexus</h2><span class="section-count" id="available-count">0</span>
+            </div>
+            <button class="btn small ghost" id="btn-refresh-source" type="button"><svg class="ui-icon">
+                <use href="#icon-refresh" />
+              </svg>Actualizar catálogo</button>
           </div>
-          <div id="available-list" class="list"><div class="loading"><span class="spinner"></span> Buscando instancias…</div></div>
+          <div id="available-list" class="list">
+            <div class="loading"><span class="spinner"></span> Buscando instancias…</div>
+          </div>
         </section>
         <p id="instances-status" class="status"></p>
       </section>
@@ -124,7 +225,9 @@
         </div>
 
         <div class="card glass">
-          <h2><svg class="ui-icon heading-icon"><use href="#icon-refresh"/></svg>Sincronización de instancias</h2>
+          <h2><svg class="ui-icon heading-icon">
+              <use href="#icon-refresh" />
+            </svg>Sincronización de instancias</h2>
           <p class="muted">Actualiza todas las instancias instaladas a la última revisión disponible.</p>
           <div class="row">
             <button class="btn primary" id="btn-sync-all">Sincronizar todas</button>
@@ -134,7 +237,9 @@
         </div>
 
         <div class="card glass">
-          <h2><svg class="ui-icon heading-icon"><use href="#icon-shield"/></svg>Staff autorizado</h2>
+          <h2><svg class="ui-icon heading-icon">
+              <use href="#icon-shield" />
+            </svg>Staff autorizado</h2>
           <div id="staff-list" class="list"></div>
           <div class="form-grid">
             <label>Nombre
@@ -149,7 +254,9 @@
         </div>
 
         <div class="card glass">
-          <h2><svg class="ui-icon heading-icon"><use href="#icon-user"/></svg>Whitelist de acceso</h2>
+          <h2><svg class="ui-icon heading-icon">
+              <use href="#icon-user" />
+            </svg>Whitelist de acceso</h2>
           <p class="muted">“Todas” = acceso a todas las instancias. Selecciona o escribe nombres exactos o *.</p>
           <div id="access-list" class="list"></div>
           <div class="form-grid">
@@ -171,38 +278,49 @@
           </div>
           <div class="row" style="margin-top: 10px; gap: 8px;">
             <button class="btn primary" id="btn-add-access">Añadir a la whitelist</button>
-            <button class="btn ghost" id="btn-sync-whitelist-gh" type="button" title="Sube la whitelist actual a GitHub (kazdev97/Hallogeey) para que todos los usuarios y staff la reciban en tiempo real"><svg class="ui-icon"><use href="#icon-refresh"/></svg>Sincronizar con GitHub</button>
+            <button class="btn ghost" id="btn-sync-whitelist-gh" type="button"
+              title="Sube la whitelist actual a GitHub (kazdev97/Hallogeey) para que todos los usuarios y staff la reciban en tiempo real"><svg
+                class="ui-icon">
+                <use href="#icon-refresh" />
+              </svg>Sincronizar con GitHub</button>
           </div>
           <p id="wl-status" class="status"></p>
         </div>
 
         <div class="card glass" id="card-publish">
           <h2>Publicar actualización (owner)</h2>
-          <p class="muted">Selecciona la carpeta local en donde estás editando la instancia y la repo destino. Se subirán a GitHub las carpetas que marques para que los usuarios reciban la actualización.</p>
+          <p class="muted">Selecciona la carpeta local en donde estás editando la instancia y la repo destino. Se
+            subirán a GitHub las carpetas que marques para que los usuarios reciban la actualización.</p>
 
           <!-- 1. Instancia / Repo destino -->
           <div class="form-grid">
             <label class="span-2">Instancia / Repo de GitHub a actualizar
               <select id="publish-target-repo">
-                <option value="kazdev97/Hallogeey" data-name="NaviGay" data-branch="main">NaviGay (kazdev97/Hallogeey) — Rama main</option>
-                <option value="kazdev97/Paucalipsis-2" data-name="Paucalipsis-2" data-branch="main">Paucalipsis 2 (kazdev97/Paucalipsis-2) — Rama main</option>
+                <option value="kazdev97/Hallogeey" data-name="NaviGay" data-branch="main">NaviGay (kazdev97/Hallogeey) —
+                  Rama main</option>
+                <option value="kazdev97/Paucalipsis-2" data-name="Paucalipsis-2" data-branch="main">Paucalipsis 2
+                  (kazdev97/Paucalipsis-2) — Rama main</option>
               </select>
             </label>
           </div>
 
           <!-- 2. Carpeta local en edición -->
           <div style="margin-top: 10px;">
-            <label style="display:block; font-size:12px; font-weight:700; margin-bottom:6px; color:var(--text);">Carpeta local de la instancia en edición</label>
+            <label style="display:block; font-size:12px; font-weight:700; margin-bottom:6px; color:var(--text);">Carpeta
+              local de la instancia en edición</label>
             <div class="row" style="gap: 8px;">
               <input id="publish-local-path" style="flex: 1;" placeholder="C:\ruta\a\tu\carpeta\de\instancia" />
               <button class="btn" id="btn-browse-folder" type="button">Examinar…</button>
-              <button class="btn ghost" id="btn-scan-folders" type="button"><svg class="ui-icon"><use href="#icon-refresh"/></svg>Consultar carpetas</button>
+              <button class="btn ghost" id="btn-scan-folders" type="button"><svg class="ui-icon">
+                  <use href="#icon-refresh" />
+                </svg>Consultar carpetas</button>
             </div>
             <div class="row" style="margin-top: 8px; gap: 6px;">
               <span class="muted" style="font-size: 11px;">Rutas rápidas:</span>
               <button class="btn small ghost" id="btn-path-navigay" type="button">Instalado: NaviGay</button>
               <button class="btn small ghost" id="btn-path-paucalipsis" type="button">Instalado: Paucalipsis 2</button>
-              <button class="btn small ghost" id="btn-path-open-explorer" type="button" title="Abrir esta carpeta en el explorador de Windows">Abrir en explorador</button>
+              <button class="btn small ghost" id="btn-path-open-explorer" type="button"
+                title="Abrir esta carpeta en el explorador de Windows">Abrir en explorador</button>
             </div>
           </div>
 
@@ -230,14 +348,16 @@
 
           <!-- 5. Botón de publicación -->
           <div class="row" style="margin-top: 14px;">
-            <button class="btn primary" id="btn-publish" style="font-size: 14px; padding: 12px 24px;">Publicar actualización</button>
+            <button class="btn primary" id="btn-publish" style="font-size: 14px; padding: 12px 24px;">Publicar
+              actualización</button>
           </div>
           <p id="publish-status" class="status"></p>
         </div>
 
         <div class="card glass">
           <h2>Temas por instancia</h2>
-          <p class="muted">Automático detecta “ataplay” (arcoíris LGBT) o “paula” (rosa/morado). El tema tiñe todo el launcher según la instancia permitida; los usuarios no pueden cambiarlo.</p>
+          <p class="muted">Automático detecta “ataplay” (arcoíris LGBT) o “paula” (rosa/morado). El tema tiñe todo el
+            launcher según la instancia permitida; los usuarios no pueden cambiarlo.</p>
           <div class="form-grid">
             <label>Tema del launcher (solo staff)
               <select id="launcher-theme-select">
@@ -403,4 +523,5 @@
 
   <script src="main.js"></script>
 </body>
+
 </html>

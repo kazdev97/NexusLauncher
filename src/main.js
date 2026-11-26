@@ -147,6 +147,7 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
     document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
+    if ($("nav-user-container")) $("nav-user-container").classList.remove("active");
     btn.classList.add("active");
     $("page-" + btn.dataset.page).classList.add("active");
     if (btn.dataset.page === "instances") {
@@ -163,7 +164,7 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
     call("discord_set_page", { page: btn.dataset.page }).catch(() => { });
   });
 });
-let currentWindowMode = "gate";
+let currentWindowMode = "";
 function getAppWindow() {
   try {
     return window.__TAURI__ && window.__TAURI__.window ? window.__TAURI__.window.getCurrentWindow() : null;
@@ -171,43 +172,22 @@ function getAppWindow() {
     return null;
   }
 }
-function logicalSize(w, h) {
-  const Ctor = (window.__TAURI__ && window.__TAURI__.window && window.__TAURI__.window.LogicalSize)
-    || (window.__TAURI__ && window.__TAURI__.dpi && window.__TAURI__.dpi.LogicalSize);
-  return Ctor ? new Ctor(w, h) : { type: "Logical", width: w, height: h };
-}
 async function setWindowMode(mode) {
   const isGate = mode === "gate";
   document.body.classList.toggle("gate-mode", isGate);
   if (currentWindowMode === mode) return;
   currentWindowMode = mode;
-  const win = getAppWindow();
-  if (!win) return;
+  if (DEMO) return;
   try {
-    if (isGate) {
-      if (await win.isMaximized().catch(() => false)) {
-        await win.toggleMaximize().catch(() => { });
-      }
-      await win.setResizable(false);
-      await win.setMinSize(logicalSize(480, 420));
-      await win.setSize(logicalSize(960, 510));
-      await win.center();
-    } else {
-      await win.setResizable(true);
-      await win.setMinSize(logicalSize(980, 640));
-      await win.setSize(logicalSize(1180, 760));
-      await win.center();
-    }
+    await call("set_window_mode", { mode });
   } catch (_) { }
 }
 function setupWindowControls() {
   const minimize = () => getAppWindow()?.minimize().catch(() => { });
-  const toggleMax = () => getAppWindow()?.toggleMaximize().catch(() => { });
   const close = () => getAppWindow()?.close().catch(() => { });
   if ($("gate-win-min")) $("gate-win-min").addEventListener("click", minimize);
   if ($("gate-win-close")) $("gate-win-close").addEventListener("click", close);
   if ($("app-win-min")) $("app-win-min").addEventListener("click", minimize);
-  if ($("app-win-max")) $("app-win-max").addEventListener("click", toggleMax);
   if ($("app-win-close")) $("app-win-close").addEventListener("click", close);
   document.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
@@ -430,8 +410,11 @@ async function refreshLogin() {
 const navUserContainer = $("nav-user-container");
 if (navUserContainer) {
   navUserContainer.addEventListener("click", () => {
-    const btn = document.querySelector('.nav-item[data-page="login"]');
-    if (btn) btn.click();
+    document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
+    navUserContainer.classList.add("active");
+    if ($("page-login")) $("page-login").classList.add("active");
+    call("discord_set_page", { page: "login" }).catch(() => { });
   });
 }
 
@@ -1629,6 +1612,20 @@ EVENT.listen("launch/error", (data) => {
 EVENT.listen("sync/status", (data) => status("instances-status", data.payload));
 EVENT.listen("sync/progress", (data) => setInstallProgress(data.payload.percent || 0, data.payload.status || ""));
 EVENT.listen("java/progress", (data) => status("settings-status", data.payload));
+const brandLogoLink = $("brand-logo-link");
+if (brandLogoLink) {
+  brandLogoLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    const url = "https://nexuscreatorsjr.pages.dev/";
+    if (DEMO) {
+      window.open(url, "_blank");
+    } else {
+      call("open_url", { url }).catch(() => {
+        try { window.open(url, "_blank"); } catch (_) { }
+      });
+    }
+  });
+}
 const donateBtn = $("donate-btn");
 if (donateBtn) {
   donateBtn.addEventListener("click", () => {
