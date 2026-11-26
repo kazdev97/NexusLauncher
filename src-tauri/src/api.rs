@@ -1,17 +1,18 @@
 // Cliente de la API del VPS: fuente de verdad para staff, whitelist e instancias.
-use crate::config::{save_config, AppSettings};
+use crate::config::Settings;
 use crate::whitelist::StaffEntry;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 
-pub const API_BASE: &str = "https://nexuslauncher.duckdns.org";
+pub const API_BASE: &str = "https://t-eje4myb6.go.altare.global";
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ApiSession {
     pub token: String,
     pub uuid: String,
     pub name: String,
     pub role: String,
+    #[serde(default)]
     pub access: Vec<String>,
 }
 
@@ -20,6 +21,7 @@ struct MeResponse {
     uuid: String,
     name: String,
     role: String,
+    #[serde(default)]
     access: Vec<String>,
 }
 
@@ -38,12 +40,11 @@ fn authed(token: &str) -> HeaderMap {
     h
 }
 
-/// Intercambia el access token de Microsoft por una sesion JWT del VPS.
-/// El servidor verifica el token contra Microsoft y devuelve rol + accesos.
-pub async fn login_with_microsoft(microsoft_token: &str) -> Result<ApiSession, String> {
+/// Intercambia el access token de Minecraft por una sesion JWT del VPS.
+pub async fn login_with_microsoft(mc_access_token: &str) -> Result<ApiSession, String> {
     let res = client()
         .post(format!("{}/auth/microsoft", API_BASE))
-        .json(&serde_json::json!({ "access_token": microsoft_token }))
+        .json(&serde_json::json!({ "access_token": mc_access_token }))
         .send()
         .await
         .map_err(|e| format!("No se pudo conectar con el VPS: {}", e))?;
@@ -77,27 +78,27 @@ pub async fn me(token: &str) -> Result<ApiSession, String> {
 }
 
 pub fn load_token() -> Option<String> {
-    let cfg = crate::config::load_config();
-    let t = cfg.settings.api_token;
+    let s = Settings::load();
+    let t = s.api_token.trim().to_string();
     if t.is_empty() { None } else { Some(t) }
 }
 
-pub fn save_session(s: &ApiSession) {
-    let mut cfg = crate::config::load_config();
-    cfg.settings.api_token = s.token.clone();
-    cfg.settings.api_role = s.role.clone();
-    let _ = save_config(&cfg);
+pub fn save_session(session: &ApiSession) {
+    let mut s = Settings::load();
+    s.api_token = session.token.clone();
+    s.api_role = session.role.clone();
+    let _ = s.save();
 }
 
 pub fn clear_session() {
-    let mut cfg = crate::config::load_config();
-    cfg.settings.api_token = String::new();
-    cfg.settings.api_role = String::new();
-    let _ = save_config(&cfg);
+    let mut s = Settings::load();
+    s.api_token = String::new();
+    s.api_role = String::new();
+    let _ = s.save();
 }
 
 pub fn cached_role() -> String {
-    crate::config::load_config().settings.api_role
+    Settings::load().api_role
 }
 
 pub async fn whitelist_get(token: &str) -> Result<serde_json::Value, String> {
@@ -111,31 +112,6 @@ pub async fn whitelist_get(token: &str) -> Result<serde_json::Value, String> {
         return Err(format!("No se pudo leer la whitelist ({})", res.status()));
     }
     res.json().await.map_err(|e| e.to_string())
-}
-
-/// Adapta la respuesta plana del VPS al formato que ya consume el panel.
-pub fn whitelist_as_legacy(value: serde_json::Value) -> serde_json::Value {
-    if value.get("instances").is_some() {
-        return value;
-    }
-    let mut grouped = std::collections::BTreeMap::<String, Vec<crate::whitelist::WhitelistPlayer>>::new();
-    if let Some(entries) = value["whitelist"].as_array() {
-        for entry in entries {
-            let instance = entry["instance"].as_str().unwrap_or_default().to_string();
-            let name = entry["name"].as_str().unwrap_or_default().to_string();
-            if !instance.is_empty() && !name.is_empty() {
-                grouped.entry(instance).or_default().push(crate::whitelist::WhitelistPlayer {
-                    name,
-                    uuid: String::new(),
-                });
-            }
-        }
-    }
-    let instances = grouped
-        .into_iter()
-        .map(|(name, whitelist)| crate::whitelist::WhitelistEntry { name, whitelist })
-        .collect::<Vec<_>>();
-    serde_json::json!({ "instances": instances })
 }
 
 pub async fn whitelist_add(token: &str, instance: &str, name: &str) -> Result<(), String> {
@@ -237,16 +213,40 @@ pub async fn instance_upsert(
     name: &str,
     slug: &str,
     description: &str,
+    mc_version: &str,
+    loader: &str,
+    loader_version: &str,
 ) -> Result<(), String> {
     let res = client()
         .post(format!("{}/instances", API_BASE))
         .headers(authed(token))
-        .json(&serde_json::json!({ "name": name, "slug": slug, "description": description }))
+        .json(&serde_json::json!({
+            "name": name,
+            "slug": slug,
+            "description": description,
+            "mc_version": mc_version,
+            "loader": loader,
+            "loader_version": loader_version,
+        }))
         .send()
         .await
         .map_err(|e| e.to_string())?;
     if !res.status().is_success() {
-        return Err("Solo el owner puede crear o actualizar instancias".into());
+        return Err(format!("Solo el owner puede crear o actualizar instancias ({})", res.status()));
+    }
+    Ok(())
+}
+
+pub async fn instance_delete(token: &str, slug: &str) -> Result<(), String> {
+    let res = client()
+        .delete(format!("{}/instances", API_BASE))
+        .headers(authed(token))
+        .json(&serde_json::json!({ "slug": slug }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("No se pudo eliminar la instancia ({})", res.status()));
     }
     Ok(())
 }
@@ -267,4 +267,36 @@ pub async fn instance_publish(
         return Err(format!("El VPS rechazo la publicacion ({})", res.status()));
     }
     res.json().await.map_err(|e| e.to_string())
+}
+
+pub async fn instance_manifest(token: &str, slug: &str) -> Result<serde_json::Value, String> {
+    let res = client()
+        .get(format!("{}/instances/manifest/{}", API_BASE, slug))
+        .headers(authed(token))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("No se pudo obtener el manifiesto ({})", res.status()));
+    }
+    res.json().await.map_err(|e| e.to_string())
+}
+
+pub async fn instance_download_file(token: &str, slug: &str, rel_path: &str) -> Result<Vec<u8>, String> {
+    let encoded = rel_path
+        .split('/')
+        .map(|seg| percent_encoding::utf8_percent_encode(seg, percent_encoding::NON_ALPHANUMERIC).to_string())
+        .collect::<Vec<_>>()
+        .join("/");
+    let res = client()
+        .get(format!("{}/instances/file/{}/{}", API_BASE, slug, encoded))
+        .headers(authed(token))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("Error descargando {} ({})", rel_path, res.status()));
+    }
+    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+    Ok(bytes.to_vec())
 }

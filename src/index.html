@@ -240,7 +240,10 @@
           <h2><svg class="ui-icon heading-icon">
               <use href="#icon-shield" />
             </svg>Staff autorizado</h2>
-          <div id="staff-list" class="list"></div>
+          <details class="admin-collapse">
+            <summary>Ver lista de staff (<span id="staff-count">0</span>)</summary>
+            <div id="staff-list" class="list"></div>
+          </details>
           <div class="form-grid">
             <label>Nombre
               <input id="staff-name" placeholder="Nombre del staff" />
@@ -258,7 +261,10 @@
               <use href="#icon-user" />
             </svg>Whitelist de acceso</h2>
           <p class="muted">“Todas” = acceso a todas las instancias. Selecciona o escribe nombres exactos o *.</p>
-          <div id="access-list" class="list"></div>
+          <details class="admin-collapse">
+            <summary>Ver whitelist de jugadores (<span id="wl-count">0</span>)</summary>
+            <div id="access-list" class="list"></div>
+          </details>
           <div class="form-grid">
             <label>Nombre
               <input id="wl-name" placeholder="Nombre del jugador" />
@@ -287,71 +293,81 @@
           <p id="wl-status" class="status"></p>
         </div>
 
-        <div class="card glass" id="card-publish">
-          <h2>Publicar actualización (owner)</h2>
-          <p class="muted">Selecciona la carpeta local en donde estás editando la instancia y la repo destino. Se
-            subirán a GitHub las carpetas que marques para que los usuarios reciban la actualización.</p>
+        <div class="card glass" id="publisher-card">
+          <h2>Crear o actualizar instancia</h2>
+          <p class="muted">Publica o actualiza instancias directamente en el VPS. Solo el propietario puede usar este
+            panel.</p>
 
-          <!-- 1. Instancia / Repo destino -->
           <div class="form-grid">
-            <label class="span-2">Instancia / Repo de GitHub a actualizar
-              <select id="publish-target-repo">
-                <option value="kazdev97/Hallogeey" data-name="NaviGay" data-branch="main">NaviGay (kazdev97/Hallogeey) —
-                  Rama main</option>
-                <option value="kazdev97/Paucalipsis-2" data-name="Paucalipsis-2" data-branch="main">Paucalipsis 2
-                  (kazdev97/Paucalipsis-2) — Rama main</option>
+            <label class="span-2">Instancia existente (opcional, para actualizar)
+              <select id="pub-existing">
+                <option value="">— Nueva instancia —</option>
+              </select>
+            </label>
+            <label>Nombre
+              <input id="pub-name" placeholder="Ej. Paucalipsis 2" />
+            </label>
+            <label>Slug identificador
+              <input id="pub-slug" placeholder="Ej. paucalipsis-2" />
+            </label>
+            <label class="span-2">Descripción (opcional)
+              <input id="pub-desc" placeholder="Descripción breve de la instancia" />
+            </label>
+            <label>Versión de Minecraft
+              <select id="pub-mc-version">
+                <option value="">Cargando versiones…</option>
+              </select>
+            </label>
+            <label>Loader
+              <select id="pub-loader">
+                <option value="fabric">Fabric</option>
+                <option value="forge">Forge</option>
+                <option value="neoforge">NeoForge</option>
+              </select>
+            </label>
+            <label class="span-2">Versión del loader
+              <select id="pub-loader-version">
+                <option value="">Selecciona una versión de Minecraft…</option>
               </select>
             </label>
           </div>
 
-          <!-- 2. Carpeta local en edición -->
           <div style="margin-top: 10px;">
             <label style="display:block; font-size:12px; font-weight:700; margin-bottom:6px; color:var(--text);">Carpeta
-              local de la instancia en edición</label>
+              local de la instancia</label>
             <div class="row" style="gap: 8px;">
-              <input id="publish-local-path" style="flex: 1;" placeholder="C:\ruta\a\tu\carpeta\de\instancia" />
-              <button class="btn" id="btn-browse-folder" type="button">Examinar…</button>
-              <button class="btn ghost" id="btn-scan-folders" type="button"><svg class="ui-icon">
+              <input id="pub-folder" style="flex: 1;" placeholder="C:\ruta\a\tu\carpeta\de\instancia" />
+              <button class="btn" id="btn-pub-browse" type="button">Examinar…</button>
+              <button class="btn ghost" id="btn-pub-scan" type="button"><svg class="ui-icon">
                   <use href="#icon-refresh" />
-                </svg>Consultar carpetas</button>
-            </div>
-            <div class="row" style="margin-top: 8px; gap: 6px;">
-              <span class="muted" style="font-size: 11px;">Rutas rápidas:</span>
-              <button class="btn small ghost" id="btn-path-navigay" type="button">Instalado: NaviGay</button>
-              <button class="btn small ghost" id="btn-path-paucalipsis" type="button">Instalado: Paucalipsis 2</button>
-              <button class="btn small ghost" id="btn-path-open-explorer" type="button"
-                title="Abrir esta carpeta en el explorador de Windows">Abrir en explorador</button>
+                </svg>Revisar archivos</button>
             </div>
           </div>
 
-          <!-- 3. Mensaje del commit opcional -->
-          <div class="form-grid" style="margin-top: 12px;">
-            <label class="span-2">Mensaje del commit (opcional)
-              <input id="publish-message" placeholder="Actualización de mods (ej. nuevos mods y configs)" />
-            </label>
-          </div>
-
-          <!-- 4. Selección de carpetas a sincronizar -->
           <div style="margin-top: 14px;">
             <div class="row" style="justify-content: space-between; margin-bottom: 6px;">
-              <span style="font-size: 13px; font-weight: 700; color: var(--text);">Carpetas a sincronizar:</span>
+              <span style="font-size: 13px; font-weight: 700; color: var(--text);">Archivos detectados (<span
+                  id="pub-files-count">0</span>):</span>
               <div class="row" style="gap: 6px;">
-                <button class="btn small ghost" id="btn-folders-select-all" type="button">Todas</button>
-                <button class="btn small ghost" id="btn-folders-mods-config" type="button">Solo mods y config</button>
-                <button class="btn small ghost" id="btn-folders-none" type="button">Ninguna</button>
+                <button class="btn small ghost" id="btn-pub-all" type="button">Todos</button>
+                <button class="btn small ghost" id="btn-pub-none" type="button">Ninguno</button>
               </div>
             </div>
-            <div id="publish-folders" class="list" style="max-height: 220px; overflow-y: auto; padding: 10px;">
-              <p class="muted">Elige una carpeta local para escanear sus subcarpetas.</p>
+            <div id="pub-files-list" class="list"
+              style="max-height: 240px; overflow-y: auto; padding: 10px; border: 1px solid var(--line); border-radius: var(--rs); background: rgba(3,5,8,.35);">
+              <p class="muted">Elige una carpeta local y pulsa “Revisar archivos”.</p>
             </div>
           </div>
 
-          <!-- 5. Botón de publicación -->
           <div class="row" style="margin-top: 14px;">
-            <button class="btn primary" id="btn-publish" style="font-size: 14px; padding: 12px 24px;">Publicar
-              actualización</button>
+            <button class="btn primary" id="btn-pub-submit" style="font-size: 14px; padding: 12px 24px;">Publicar
+              instancia en VPS</button>
           </div>
-          <p id="publish-status" class="status"></p>
+          <p id="pub-status" class="status"></p>
+          <details class="admin-collapse" open style="margin-top: 14px;">
+            <summary>Instancias publicadas en el VPS (<span id="pub-vps-count">0</span>)</summary>
+            <div id="pub-vps-list" class="list"></div>
+          </details>
         </div>
 
         <div class="card glass">
@@ -412,18 +428,6 @@
             <span>Actualizaciones automáticas</span>
           </label>
           <button class="btn primary" id="btn-save-settings">Guardar</button>
-        </div>
-
-        <div class="card glass" id="card-token">
-          <h2>🔑 Token de GitHub (owner)</h2>
-          <p class="muted">Necesario para publicar desde el launcher. Se guarda solo en este equipo.</p>
-          <label>Token
-            <input id="gh-token" type="password" placeholder="ghp_…" />
-          </label>
-          <div class="row">
-            <button class="btn primary" id="btn-save-token">Guardar token</button>
-          </div>
-          <p id="token-status" class="status"></p>
         </div>
 
         <div class="card glass">

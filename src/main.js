@@ -160,7 +160,7 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
       });
     }
     if (btn.dataset.page === "admin") { loadWhitelistUI(); loadPublishUI(); }
-    if (btn.dataset.page === "settings") { loadSettings(); setupRam(); fillRollbackForm(); loadAntilag(); loadTokenStatus(); }
+    if (btn.dataset.page === "settings") { loadSettings(); setupRam(); fillRollbackForm(); loadAntilag(); }
     call("discord_set_page", { page: btn.dataset.page }).catch(() => { });
   });
 });
@@ -218,11 +218,17 @@ function hideGate() {
 function normUuid(u) {
   return (u || "").toLowerCase().replace(/-/g, "").trim();
 }
+let vpsSessionState = null;
 async function loadWhitelist() {
   try {
     wl = await call("whitelist_get", {});
   } catch (e) {
     wl = null;
+  }
+  try {
+    vpsSessionState = await call("vps_role", {});
+  } catch (e) {
+    vpsSessionState = null;
   }
   computeAccess();
   updateAccessUI();
@@ -232,6 +238,15 @@ function computeAccess() {
   isAdmin = false;
   isOwner = false;
   userAccessInstances = null;
+  if (vpsSessionState && vpsSessionState.online) {
+    const role = (vpsSessionState.role || "").toLowerCase();
+    if (role === "owner") { isAdmin = true; isOwner = true; return; }
+    if (role === "staff") { isAdmin = true; return; }
+    const list = Array.isArray(vpsSessionState.access) ? vpsSessionState.access : [];
+    if (list.includes("*") || list.includes("Todas")) userAccessInstances = null;
+    else userAccessInstances = list.slice();
+    return;
+  }
   if (!wl) return;
   const me = normUuid(currentUuid);
   if (!me) return;
@@ -269,10 +284,8 @@ function updateAccessUI() {
   const navAdmin = $("nav-admin");
   if (navAdmin) navAdmin.classList.toggle("hidden", !isAdmin);
   // Publicar y guardar token son solo del propietario.
-  const cardPublish = $("card-publish");
+  const cardPublish = $("publisher-card");
   if (cardPublish) cardPublish.classList.toggle("hidden", !isOwner);
-  const cardToken = $("card-token");
-  if (cardToken) cardToken.classList.toggle("hidden", !isOwner);
   const badge = $("access-badge");
   if (badge) {
     if (!currentUuid) badge.classList.add("hidden");
@@ -305,11 +318,11 @@ async function doMicrosoftLogin() {
     if (card && isGateVisible) {
       card.classList.remove("is-authenticating");
       const label = $("gate-auth-label");
-      if (label) label.textContent = "Bienvenido, " + displayName;
+      if (label) label.textContent = "Bienvenidx, " + displayName;
       card.classList.add("is-success");
-      await new Promise((r) => setTimeout(r, 750));
+      await new Promise((r) => setTimeout(r, 1500));
       card.classList.add("is-exiting");
-      await new Promise((r) => setTimeout(r, 380));
+      await new Promise((r) => setTimeout(r, 450));
     }
     gateReady = true;
     await refreshLogin();
@@ -571,6 +584,7 @@ async function loadWhitelistUI() {
   if (!wl) return;
   // Staff
   const staffList = $("staff-list");
+  if ($("staff-count")) $("staff-count").textContent = String((wl.staff || []).length);
   if (staffList) {
     staffList.innerHTML = "";
     (wl.staff || []).forEach((s) => {
@@ -587,6 +601,7 @@ async function loadWhitelistUI() {
   }
   // Access
   const accList = $("access-list");
+  if ($("wl-count")) $("wl-count").textContent = String((wl.access || []).length);
   if (accList) {
     accList.innerHTML = "";
     (wl.access || []).forEach((a) => {
@@ -712,234 +727,302 @@ function bindAdmin() {
 }
 bindAdmin();
 
-// ─── Publicador de actualizaciones (owner) ───
-// El owner selecciona la carpeta local donde edita la instancia y la repo destino.
-// Sube solo las carpetas elegidas (mods, config, etc.) a GitHub vía Git Data API.
-// Los usuarios finales reciben ese cambio con sync_check/sync_apply al darle a jugar.
-let publishRenderToken = 0;
+// ─── Publicador de instancias VPS (owner) ───
+let vpsInstancesCache = [];
+let vpsMcVersionsCache = null;
 
-async function scanLocalPublishFolders(path) {
-  const box = $("publish-folders");
-  if (!box) return;
-  const targetPath = (path || ($("publish-local-path") || {}).value || "").trim();
-  box.innerHTML = "";
-  if (!targetPath) {
-    box.innerHTML = '<p class="muted">Elige o escribe una carpeta local para escanear sus subcarpetas.</p>';
-    return;
-  }
-  const token = ++publishRenderToken;
-  try {
-    status("publish-status", "Escaneando subcarpetas locales...");
-    const folders = await call("instance_list_publish_folders", { name: targetPath }) || [];
-    if (token !== publishRenderToken) return;
-    if (!folders.length) {
-      box.innerHTML = '<p class="muted">No se encontraron subcarpetas publicables en esta ruta.</p>';
-      status("publish-status", "");
+function slugifyName(s) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function updatePublishSubmitLabel() {
+  const btn = $("btn-pub-submit");
+  const slugInput = $("pub-slug");
+  if (!btn || !slugInput) return;
+  const slug = slugInput.value.trim().toLowerCase();
+  const exists = vpsInstancesCache.some((i) => (i.slug || "").toLowerCase() === slug);
+  btn.textContent = exists ? "Actualizar instancia" : "Crear y publicar instancia";
+}
+
+async function loadMinecraftReleases() {
+  const sel = $("pub-mc-version");
+  if (!sel) return;
+  if (!vpsMcVersionsCache) {
+    sel.innerHTML = '<option value="">Consultando Mojang…</option>';
+    try {
+      const res = await fetch("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json");
+      const data = await res.json();
+      vpsMcVersionsCache = (data.versions || [])
+        .filter((v) => v.type === "release")
+        .map((v) => v.id);
+    } catch (e) {
+      sel.innerHTML = '<option value="">Error consultando Mojang</option>';
       return;
     }
-    status("publish-status", `${folders.length} subcarpeta(s) encontradas.`);
-    folders.forEach((f) => {
+  }
+  const prev = sel.value;
+  sel.innerHTML = "";
+  vpsMcVersionsCache.forEach((id) => {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = id;
+    sel.appendChild(opt);
+  });
+  if (prev && vpsMcVersionsCache.includes(prev)) sel.value = prev;
+  else if (vpsMcVersionsCache.length) sel.value = vpsMcVersionsCache[0];
+}
+
+async function loadLoaderVersionsForPublish(preferred) {
+  const mc = (($("pub-mc-version") || {}).value || "").trim();
+  const loader = (($("pub-loader") || {}).value || "fabric").trim();
+  const sel = $("pub-loader-version");
+  if (!sel) return;
+  if (!mc) {
+    sel.innerHTML = '<option value="">Elige primero versión de Minecraft</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">Consultando versiones…</option>';
+  let versions = [];
+  try {
+    if (loader === "fabric") {
+      const res = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(mc)}`);
+      const arr = await res.json();
+      versions = (Array.isArray(arr) ? arr : []).map((x) => x.loader && x.loader.version).filter(Boolean);
+    } else if (loader === "forge") {
+      const res = await fetch("https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml");
+      const xml = await res.text();
+      const prefix = `${mc}-`;
+      const matches = Array.from(xml.matchAll(/<version>([^<]+)<\/version>/g)).map((m) => m[1]);
+      versions = matches.filter((v) => v.startsWith(prefix)).reverse();
+    } else if (loader === "neoforge") {
+      const res = await fetch("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml");
+      const xml = await res.text();
+      const parts = mc.split(".");
+      const prefix = parts.length >= 2 ? `${parts[1]}.${parts[2] || 0}.` : "";
+      const matches = Array.from(xml.matchAll(/<version>([^<]+)<\/version>/g)).map((m) => m[1]);
+      versions = (prefix ? matches.filter((v) => v.startsWith(prefix)) : matches).reverse();
+    }
+  } catch (e) {
+    sel.innerHTML = `<option value="">Error al consultar ${escapeHtml(loader)}</option>`;
+    return;
+  }
+  sel.innerHTML = "";
+  if (!versions.length) {
+    sel.innerHTML = `<option value="">Sin versiones de ${escapeHtml(loader)} para ${escapeHtml(mc)}</option>`;
+    return;
+  }
+  versions.forEach((v) => {
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.textContent = v;
+    sel.appendChild(opt);
+  });
+  if (preferred && versions.includes(preferred)) sel.value = preferred;
+}
+
+async function scanVpsPublishFiles(folder) {
+  const box = $("pub-files-list");
+  const countEl = $("pub-files-count");
+  if (!box) return;
+  const target = (folder || (($("pub-folder") || {}).value || "")).trim();
+  box.innerHTML = "";
+  if (countEl) countEl.textContent = "0";
+  if (!target) {
+    box.innerHTML = '<p class="muted">Elige una carpeta local y pulsa “Revisar archivos”.</p>';
+    return;
+  }
+  try {
+    status("pub-status", "Escaneando archivos locales…");
+    const files = await call("vps_publisher_scan", { path: target }) || [];
+    if (countEl) countEl.textContent = String(files.length);
+    if (!files.length) {
+      box.innerHTML = '<p class="muted">No se encontraron archivos en esta carpeta.</p>';
+      status("pub-status", "");
+      return;
+    }
+    status("pub-status", `${files.length} archivo(s) listos para seleccionar.`);
+    files.forEach((f) => {
       const row = document.createElement("label");
       row.className = "folder-check";
-      const isDefaultChecked = ["mods", "config", "resourcepacks", "shaderpacks", "scripts", "kubejs", "defaultconfigs"].includes(f.toLowerCase());
-      row.innerHTML = `<input type="checkbox" value="${escapeHtml(f)}" ${isDefaultChecked ? "checked" : ""} /> <span>${escapeHtml(f)}</span>`;
+      const kb = f.size >= 1024 * 1024 ? `${(f.size / (1024 * 1024)).toFixed(2)} MB` : `${Math.max(1, Math.round(f.size / 1024))} KB`;
+      row.innerHTML = `<input type="checkbox" value="${escapeHtml(f.path)}" checked /> <span>${escapeHtml(f.path)}</span> <span class="muted" style="margin-left:auto;font-size:11px;">${kb}</span>`;
       box.appendChild(row);
     });
   } catch (e) {
-    if (token !== publishRenderToken) return;
     box.innerHTML = `<p class="muted">Error: ${escapeHtml(e.message)}</p>`;
-    status("publish-status", e.message);
+    status("pub-status", e.message);
   }
 }
 
-async function setPublishLocalPath(path) {
-  const input = $("publish-local-path");
-  if (!input) return;
-  input.value = path;
-  await scanLocalPublishFolders(path);
+function renderVpsInstancesList() {
+  const box = $("pub-vps-list");
+  const countEl = $("pub-vps-count");
+  if (countEl) countEl.textContent = String(vpsInstancesCache.length);
+  if (!box) return;
+  box.innerHTML = "";
+  if (!vpsInstancesCache.length) {
+    box.innerHTML = '<p class="muted">No hay instancias publicadas en el VPS todavía.</p>';
+    return;
+  }
+  vpsInstancesCache.forEach((inst) => {
+    const row = document.createElement("div");
+    row.className = "instance-card";
+    const meta = [inst.slug, inst.mc_version, inst.loader, inst.loader_version, `v${inst.version || 1}`].filter(Boolean).join(" · ");
+    row.innerHTML = `<div class="icon">${escapeHtml((inst.name || "?").charAt(0).toUpperCase())}</div><div class="info"><b>${escapeHtml(inst.name)}</b><div class="sub">${escapeHtml(meta)}</div></div><div class="actions"><button class="btn danger small" data-del-vps>Eliminar</button></div>`;
+    row.querySelector("[data-del-vps]").addEventListener("click", async () => {
+      if (!confirm(`¿Eliminar la instancia "${inst.name}" (${inst.slug}) del VPS? Esta acción borrará sus archivos del servidor.`)) return;
+      try {
+        status("pub-status", `Eliminando ${inst.slug}…`);
+        await call("vps_instance_delete", { slug: inst.slug });
+        status("pub-status", `Instancia "${inst.slug}" eliminada del VPS.`);
+        await loadPublishUI();
+        loadSource().catch(() => {});
+      } catch (e) {
+        status("pub-status", "Error al eliminar: " + e.message);
+      }
+    });
+    box.appendChild(row);
+  });
 }
 
 async function loadPublishUI() {
   if (!isOwner) return;
-  const localInput = $("publish-local-path");
-  if (localInput && !localInput.value.trim()) {
+  const existingSel = $("pub-existing");
+  if (existingSel) {
     try {
-      const inst = (instances || []).find((i) => /hallogeey|navigay/i.test(i.name)) || (instances || [])[0];
-      if (inst) {
-        const dir = await call("instance_get_local_dir", { name: inst.name });
-        if (dir) await setPublishLocalPath(dir);
-      }
-    } catch (_) { }
+      const res = await call("vps_instances_list", {});
+      vpsInstancesCache = Array.isArray(res && res.instances) ? res.instances : [];
+      existingSel.innerHTML = '<option value="">— Nueva instancia —</option>';
+      vpsInstancesCache.forEach((inst) => {
+        const opt = document.createElement("option");
+        opt.value = inst.slug;
+        opt.textContent = `${inst.name} (${inst.slug}) · v${inst.version || 1}`;
+        existingSel.appendChild(opt);
+      });
+    } catch (e) {
+      vpsInstancesCache = [];
+      status("pub-status", "VPS no disponible en este momento: " + e.message);
+    }
   }
+  renderVpsInstancesList();
+  await loadMinecraftReleases();
+  await loadLoaderVersionsForPublish();
+  updatePublishSubmitLabel();
 }
 
 function bindPublisher() {
-  const localInput = $("publish-local-path");
-  if (localInput) {
-    let timer = null;
-    localInput.addEventListener("input", () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        scanLocalPublishFolders(localInput.value.trim());
-      }, 500);
+  const nameInput = $("pub-name");
+  const slugInput = $("pub-slug");
+  const existingSel = $("pub-existing");
+  const mcSel = $("pub-mc-version");
+  const loaderSel = $("pub-loader");
+  const folderInput = $("pub-folder");
+
+  if (nameInput && slugInput) {
+    nameInput.addEventListener("input", () => {
+      if (!existingSel || !existingSel.value) {
+        slugInput.value = slugifyName(nameInput.value);
+      }
+      updatePublishSubmitLabel();
+    });
+    slugInput.addEventListener("input", updatePublishSubmitLabel);
+  }
+
+  if (existingSel) {
+    existingSel.addEventListener("change", async () => {
+      const slug = existingSel.value;
+      const found = vpsInstancesCache.find((i) => i.slug === slug);
+      if (found) {
+        if ($("pub-name")) $("pub-name").value = found.name || "";
+        if ($("pub-slug")) $("pub-slug").value = found.slug || "";
+        if ($("pub-desc")) $("pub-desc").value = found.description || "";
+        if (mcSel && found.mc_version) mcSel.value = found.mc_version;
+        if (loaderSel && found.loader) loaderSel.value = found.loader;
+        await loadLoaderVersionsForPublish(found.loader_version || "");
+      } else {
+        if ($("pub-name")) $("pub-name").value = "";
+        if ($("pub-slug")) $("pub-slug").value = "";
+        if ($("pub-desc")) $("pub-desc").value = "";
+      }
+      updatePublishSubmitLabel();
     });
   }
 
-  const browseBtn = $("btn-browse-folder");
+  if (mcSel) mcSel.addEventListener("change", () => loadLoaderVersionsForPublish());
+  if (loaderSel) loaderSel.addEventListener("change", () => loadLoaderVersionsForPublish());
+
+  const browseBtn = $("btn-pub-browse");
   if (browseBtn) browseBtn.addEventListener("click", async () => {
     try {
       const picked = await call("pick_folder", {});
-      if (picked) {
-        await setPublishLocalPath(picked);
+      if (picked && folderInput) {
+        folderInput.value = picked;
+        await scanVpsPublishFiles(picked);
       }
     } catch (e) {
-      status("publish-status", "Error al seleccionar carpeta: " + e.message);
+      status("pub-status", "Error al seleccionar carpeta: " + e.message);
     }
   });
 
-  const pathHalloBtn = $("btn-path-navigay") || $("btn-path-hallogeey");
-  if (pathHalloBtn) pathHalloBtn.addEventListener("click", async () => {
-    try {
-      const inst = (instances || []).find((i) => /navigay|hallogeey/i.test(i.name));
-      const instName = inst ? inst.name : "NaviGay";
-      const dir = await call("instance_get_local_dir", { name: instName });
-      if (dir) {
-        await setPublishLocalPath(dir);
-        const repoSel = $("publish-target-repo");
-        if (repoSel) repoSel.value = "kazdev97/Hallogeey";
-      }
-    } catch (e) {
-      status("publish-status", "No se pudo obtener la ruta: " + e.message);
-    }
-  });
+  const scanBtn = $("btn-pub-scan");
+  if (scanBtn) scanBtn.addEventListener("click", () => scanVpsPublishFiles());
 
-  const pathPauBtn = $("btn-path-paucalipsis");
-  if (pathPauBtn) pathPauBtn.addEventListener("click", async () => {
-    try {
-      const inst = (instances || []).find((i) => /paucalipsis/i.test(i.name));
-      const instName = inst ? inst.name : "Paucalipsis-2";
-      const dir = await call("instance_get_local_dir", { name: instName });
-      if (dir) {
-        await setPublishLocalPath(dir);
-        const repoSel = $("publish-target-repo");
-        if (repoSel) repoSel.value = "kazdev97/Paucalipsis-2";
-      }
-    } catch (e) {
-      status("publish-status", "No se pudo obtener la ruta: " + e.message);
-    }
+  const allBtn = $("btn-pub-all");
+  if (allBtn) allBtn.addEventListener("click", () => {
+    document.querySelectorAll("#pub-files-list input[type=checkbox]").forEach((cb) => { cb.checked = true; });
   });
-
-  const openExpBtn = $("btn-path-open-explorer");
-  if (openExpBtn) openExpBtn.addEventListener("click", async () => {
-    const p = (localInput && localInput.value || "").trim();
-    if (!p) { status("publish-status", "Escribe o selecciona primero una carpeta."); return; }
-    try {
-      await call("open_folder", { path: p });
-    } catch (e) {
-      status("publish-status", "Error al abrir la carpeta: " + e.message);
-    }
-  });
-
-  const scanFoldersBtn = $("btn-scan-folders");
-  if (scanFoldersBtn) scanFoldersBtn.addEventListener("click", async () => {
-    scanFoldersBtn.disabled = true;
-    scanFoldersBtn.textContent = "Consultando...";
-    try {
-      await scanLocalPublishFolders();
-    } finally {
-      scanFoldersBtn.disabled = false;
-      scanFoldersBtn.textContent = "🔄 Consultar carpetas";
-    }
-  });
-
-  const selectAllBtn = $("btn-folders-select-all");
-  if (selectAllBtn) selectAllBtn.addEventListener("click", () => {
-    document.querySelectorAll("#publish-folders input[type=checkbox]").forEach((cb) => cb.checked = true);
-  });
-  const modsConfigBtn = $("btn-folders-mods-config");
-  if (modsConfigBtn) modsConfigBtn.addEventListener("click", () => {
-    document.querySelectorAll("#publish-folders input[type=checkbox]").forEach((cb) => {
-      const val = cb.value.toLowerCase();
-      cb.checked = (val === "mods" || val === "config");
-    });
-  });
-  const noneBtn = $("btn-folders-none");
+  const noneBtn = $("btn-pub-none");
   if (noneBtn) noneBtn.addEventListener("click", () => {
-    document.querySelectorAll("#publish-folders input[type=checkbox]").forEach((cb) => cb.checked = false);
+    document.querySelectorAll("#pub-files-list input[type=checkbox]").forEach((cb) => { cb.checked = false; });
   });
 
-  const publishBtn = $("btn-publish");
-  if (publishBtn) publishBtn.addEventListener("click", async () => {
-    const localPath = (localInput && localInput.value || "").trim();
-    if (!localPath) {
-      status("publish-status", "Selecciona o escribe la carpeta local de la instancia.");
-      return;
-    }
-    const repoSel = $("publish-target-repo");
-    const repo = (repoSel && repoSel.value || "").trim();
-    if (!repo) {
-      status("publish-status", "Selecciona la repo de destino.");
-      return;
-    }
-    const folders = Array.from(document.querySelectorAll("#publish-folders input[type=checkbox]:checked")).map((i) => i.value);
-    if (!folders.length) {
-      status("publish-status", "Marca al menos una carpeta para sincronizar.");
-      return;
-    }
-    const message = (($("publish-message") || {}).value || "").trim();
+  const submitBtn = $("btn-pub-submit");
+  if (submitBtn) submitBtn.addEventListener("click", async () => {
+    const name = (($("pub-name") || {}).value || "").trim();
+    const slug = (($("pub-slug") || {}).value || "").trim();
+    const description = (($("pub-desc") || {}).value || "").trim();
+    const mcVersion = ((mcSel && mcSel.value) || "").trim();
+    const loader = ((loaderSel && loaderSel.value) || "fabric").trim();
+    const loaderVersion = (($("pub-loader-version") || {}).value || "").trim();
+    const folder = ((folderInput && folderInput.value) || "").trim();
+    const files = Array.from(document.querySelectorAll("#pub-files-list input[type=checkbox]:checked")).map((c) => c.value);
 
-    publishBtn.disabled = true;
-    publishBtn.textContent = "Publicando a GitHub…";
-    status("publish-status", `Subiendo ${folders.length} carpeta(s) a ${repo}...`);
+    if (!name || !slug) { status("pub-status", "Define el nombre y el slug de la instancia."); return; }
+    if (!mcVersion || !loaderVersion) { status("pub-status", "Selecciona la versión de Minecraft y del loader."); return; }
+    if (!folder) { status("pub-status", "Selecciona la carpeta local de la instancia."); return; }
+    if (!files.length) { status("pub-status", "Marca al menos un archivo para publicar."); return; }
 
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Publicando en VPS…";
+    status("pub-status", `Subiendo ${files.length} archivo(s) a ${slug}…`);
     try {
-      const sha = await call("publisher_publish", {
-        localPath,
-        repo,
-        branch: "main",
-        subpath: "",
-        folders,
-        message,
+      const res = await call("vps_instance_publish", {
+        folder,
+        name,
+        slug,
+        description,
+        mcVersion,
+        loader,
+        loaderVersion,
+        files,
       });
-      status("publish-status", `🚀 ¡Actualización publicada! Commit ${sha.slice(0, 10)}. Los usuarios la recibirán al jugar o sincronizar.`);
-      $("publish-message").value = "";
+      status("pub-status", `Instancia "${slug}" publicada (${res && res.files != null ? res.files : files.length} archivos).`);
+      await loadPublishUI();
     } catch (e) {
-      status("publish-status", "Error publicando actualización: " + e.message);
+      status("pub-status", "Error al publicar en VPS: " + e.message);
     } finally {
-      publishBtn.disabled = false;
-      publishBtn.textContent = "🚀 Lanzar actualización";
+      submitBtn.disabled = false;
+      updatePublishSubmitLabel();
     }
   });
 
-  // Token de GitHub en Ajustes
-  const tokenBtn = $("btn-save-token");
-  if (tokenBtn) tokenBtn.addEventListener("click", async () => {
-    const token = (($("gh-token") || {}).value || "").trim();
-    if (!token) { status("token-status", "Pega tu token de GitHub (ghp_…)."); return; }
-    tokenBtn.disabled = true;
-    try {
-      await call("publisher_set_token", { token });
-      $("gh-token").value = "";
-      status("token-status", "Token guardado. Ya puedes publicar actualizaciones.");
-    } catch (e) {
-      status("token-status", "Error guardando el token: " + e.message);
-    } finally {
-      tokenBtn.disabled = false;
-    }
-  });
 }
 bindPublisher();
-async function loadTokenStatus() {
-  const st = $("token-status");
-  if (!st) return;
-  if (!isOwner) { st.textContent = ""; return; }
-  try {
-    const has = await call("publisher_get_status", {});
-    st.textContent = has ? "Token configurado. Publicar está habilitado." : "Sin token. Pega uno para poder publicar.";
-  } catch (e) {
-    st.textContent = "";
-  }
-}
 let instances = [];
 let currentInstance = null;
 
@@ -1660,6 +1743,26 @@ if (themeToggle) {
     } catch (_) { }
   });
 }
+function showUpdatePopup(latestVersion) {
+  document.querySelectorAll(".modal-backdrop").forEach((m) => m.remove());
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.innerHTML = `<div class="modal upd-modal">
+    <div class="gate-kicker" style="margin-bottom:8px;"><span class="live-dot"></span> ACTUALIZACIÓN DISPONIBLE</div>
+    <h2 style="margin:0 0 6px;">Nueva actualización v${escapeHtml(latestVersion || "")}</h2>
+    <p class="muted" style="margin:0 0 14px;">Actualizando automágicamente…</p>
+    <div class="upd-popup-box">
+      <div class="upd-stage"><span class="spinner"></span><span id="upd-stage-text">Descargando actualización…</span></div>
+      <div class="progress-track" style="margin-top:12px;"><div class="progress-fill" id="upd-progress-fill" style="width:35%;"></div></div>
+    </div>
+  </div>`;
+  document.body.appendChild(backdrop);
+  requestAnimationFrame(() => {
+    const f = $("upd-progress-fill");
+    if (f) f.style.width = "62%";
+  });
+}
+
 function checkLauncherUpdate() {
   const chip = $("update-chip");
   if (!chip) return;
@@ -1676,12 +1779,25 @@ function checkLauncherUpdate() {
       link.className = "up";
       link.textContent = `actualización disponible (v${info.latest})`;
       const apply = async () => {
-        if (DEMO) { showModal(`<h2>Actualización v${escapeHtml(info.latest)}</h2><div class="group">Demo: se descargaría, instalaría y reiniciaría automáticamente.</div>`); return; }
+        showUpdatePopup(info.latest);
+        if (DEMO) {
+          setTimeout(() => {
+            const f = $("upd-progress-fill");
+            const t = $("upd-stage-text");
+            if (f) f.style.width = "92%";
+            if (t) t.textContent = "Instalando y reiniciando automágicamente… (modo demo)";
+          }, 900);
+          return;
+        }
         chip.textContent = "descargando actualización…";
         link.classList.remove("clickable");
         try {
           await call("update_apply", {});
           chip.textContent = "instalando y reiniciando…";
+          const fill = $("upd-progress-fill");
+          const stageTxt = $("upd-stage-text");
+          if (fill) fill.style.width = "90%";
+          if (stageTxt) stageTxt.textContent = "Instalando y reiniciando automágicamente…";
           // El instalador corre desconectado: si no logra cerrar/reiniciar, dar
           // una salida visible con el registro en vez de dejar el chip colgado.
           setTimeout(async () => {

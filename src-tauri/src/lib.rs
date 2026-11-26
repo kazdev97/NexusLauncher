@@ -75,7 +75,15 @@ fn login_get_state() -> Result<AccountStore, String> {
 
 #[tauri::command]
 async fn login_start(app: tauri::AppHandle) -> Result<Account, String> {
-    auth::start_login_flow(app).await
+    let account = auth::start_login_flow(app).await?;
+    match api::login_with_microsoft(&account.access_token).await {
+        Ok(session) => api::save_session(&session),
+        Err(e) => {
+            api::clear_session();
+            eprintln!("[vps] login_with_microsoft aviso: {e}");
+        }
+    }
+    Ok(account)
 }
 
 #[tauri::command]
@@ -88,12 +96,23 @@ fn login_get_account(account_id: String) -> Result<Account, String> {
 }
 
 #[tauri::command]
-fn login_set_selected(account_id: String) -> Result<(), String> {
-    config::set_selected_account(&account_id)
+async fn login_set_selected(account_id: String) -> Result<(), String> {
+    api::clear_session();
+    config::set_selected_account(&account_id)?;
+    let store = config::AccountStore::load();
+    if let Some(acc) = store.get(&account_id) {
+        if !acc.access_token.trim().is_empty() {
+            if let Ok(session) = api::login_with_microsoft(&acc.access_token).await {
+                api::save_session(&session);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
 fn login_remove_account(account_id: String) -> Result<(), String> {
+    api::clear_session();
     config::remove_account(&account_id)
 }
 #[tauri::command]
@@ -236,6 +255,9 @@ async fn sync_check(name: String) -> Result<sync::SyncDiff, String> {
     require_access(&name)?;
     let dir = instances::instance_path(&name);
     let meta = instances::load_meta(&dir);
+    if let Some(slug) = meta.manifest_url.strip_prefix("vps://") {
+        return vps_instances::vps_check_dir(&dir, slug).await;
+    }
     if !meta.github_repo.trim().is_empty() {
         return sync::git_check_dir(&dir, &meta).await;
     }
@@ -257,6 +279,9 @@ async fn sync_apply(app: tauri::AppHandle, name: String) -> Result<sync::SyncRes
     let mut on_progress = |percent: u32, status: String| {
         let _ = handle.emit("sync/progress", ProgressMsg { percent, status });
     };
+    if let Some(slug) = meta.manifest_url.strip_prefix("vps://") {
+        return vps_instances::vps_apply_dir(&dir, slug, &mut on_status, &mut on_progress).await;
+    }
     if !meta.github_repo.trim().is_empty() {
         return sync::git_apply_dir(&dir, &mut on_status, &mut on_progress).await;
     }
@@ -406,6 +431,48 @@ async fn source_fetch(url: Option<String>) -> Result<Vec<sync::SourceInstance>, 
         });
     }
 
+    // Incorporar instancias publicadas en el VPS si hay sesión activa
+    if let Some(token) = api::load_token() {
+        if let Ok(vps_val) = api::instances_list(&token).await {
+            if let Some(arr) = vps_val.get("instances").and_then(|v| v.as_array()) {
+                for v in arr {
+                    let slug = v["slug"].as_str().unwrap_or_default().to_string();
+                    let name = v["name"].as_str().unwrap_or(&slug).to_string();
+                    if slug.is_empty() || name.is_empty() { continue; }
+                    let key = normalize(&name);
+                    if let Some(existing) = list.iter_mut().find(|item| normalize(&item.name) == key) {
+                        existing.manifest_url = format!("vps://{slug}");
+                        if let Some(mc) = v["mc_version"].as_str().filter(|s| !s.is_empty()) {
+                            existing.game_version = mc.to_string();
+                        }
+                        if let Some(ld) = v["loader"].as_str().filter(|s| !s.is_empty()) {
+                            existing.loader = ld.to_string();
+                        }
+                        if let Some(lv) = v["loader_version"].as_str().filter(|s| !s.is_empty()) {
+                            existing.loader_version = lv.to_string();
+                        }
+                        existing.revision = format!("v{}", v["version"].as_u64().unwrap_or(1));
+                    } else {
+                        list.push(sync::SourceInstance {
+                            id: slug.clone(),
+                            name,
+                            description: v["description"].as_str().unwrap_or("").to_string(),
+                            game_version: v["mc_version"].as_str().unwrap_or("").to_string(),
+                            loader: v["loader"].as_str().unwrap_or("fabric").to_string(),
+                            loader_version: v["loader_version"].as_str().unwrap_or("").to_string(),
+                            manifest_url: format!("vps://{slug}"),
+                            revision: format!("v{}", v["version"].as_u64().unwrap_or(1)),
+                            installed: false,
+                            github_repo: String::new(),
+                            github_path: String::new(),
+                            github_branch: String::new(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     // Completar rutas de sincronización en caso de venir vacías en el índice y renombrar a NaviGay
     for s in list.iter_mut() {
         let norm = normalize(&s.name);
@@ -444,6 +511,22 @@ async fn source_install(
 ) -> Result<(), String> {
     let handle = app.clone();
     require_access(&name)?;
+    if let Some(slug) = manifest_url.strip_prefix("vps://") {
+        return vps_instances::vps_install_instance(
+            &name,
+            &game_version,
+            &loader,
+            &loader_version,
+            slug,
+            &mut |status| {
+                let _ = handle.emit("sync/status", status);
+            },
+            &mut |percent, status| {
+                let _ = handle.emit("sync/progress", ProgressMsg { percent, status });
+            },
+        )
+        .await;
+    }
     sync::install_remote_instance(
         &name,
         &game_version,
@@ -545,10 +628,10 @@ fn launch_is_running() -> bool {
 }
 #[tauri::command]
 fn settings_get() -> Result<Settings, String> {
-    // Se devuelve una copia sin el token: el frontend solo necesita saber si
-    // hay token guardado (publisher_get_status).
+    // Se devuelve una copia sin los tokens sensibles.
     let mut s = Settings::load();
     s.github_token = String::new();
+    s.api_token = String::new();
     Ok(s)
 }
 
@@ -791,6 +874,92 @@ async fn uuid_lookup(name: String) -> Result<UuidLookup, String> {
 }
 
 #[tauri::command]
+async fn vps_role() -> Result<serde_json::Value, String> {
+    if let Some(token) = api::load_token() {
+        match api::me(&token).await {
+            Ok(session) => {
+                api::save_session(&session);
+                return Ok(serde_json::json!({
+                    "online": true,
+                    "role": session.role,
+                    "access": session.access,
+                    "uuid": session.uuid,
+                    "name": session.name,
+                }));
+            }
+            Err(e) if e.contains("caducada") => {
+                api::clear_session();
+            }
+            Err(_) => {
+                // Fallo de red: nunca escalar privilegios; devolver estado offline.
+                return Ok(serde_json::json!({
+                    "online": false,
+                    "role": "player",
+                    "access": [],
+                }));
+            }
+        }
+    }
+    // Intentar intercambiar el token de Minecraft guardado si aún no hay JWT del VPS.
+    let store = config::AccountStore::load();
+    if let Some(acc) = store.selected() {
+        if !acc.access_token.trim().is_empty() {
+            if let Ok(session) = api::login_with_microsoft(&acc.access_token).await {
+                api::save_session(&session);
+                return Ok(serde_json::json!({
+                    "online": true,
+                    "role": session.role,
+                    "access": session.access,
+                    "uuid": session.uuid,
+                    "name": session.name,
+                }));
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "online": false,
+        "role": "player",
+        "access": [],
+    }))
+}
+
+#[tauri::command]
+async fn vps_whitelist_get() -> Result<serde_json::Value, String> {
+    let token = api::load_token().ok_or("No hay sesion del VPS")?;
+    api::whitelist_get(&token).await
+}
+
+#[tauri::command]
+async fn vps_whitelist_add(instance: String, name: String) -> Result<(), String> {
+    let token = api::load_token().ok_or("No hay sesion del VPS")?;
+    api::whitelist_add(&token, &instance, &name).await
+}
+
+#[tauri::command]
+async fn vps_whitelist_remove(instance: String, name: String) -> Result<(), String> {
+    let token = api::load_token().ok_or("No hay sesion del VPS")?;
+    api::whitelist_remove(&token, &instance, &name).await
+}
+
+#[tauri::command]
+async fn vps_staff_list() -> Result<Vec<whitelist::StaffEntry>, String> {
+    let token = api::load_token().ok_or("No hay sesion del VPS")?;
+    api::staff_list(&token).await
+}
+
+#[tauri::command]
+async fn vps_staff_add(name: String, uuid: String) -> Result<(), String> {
+    let token = api::load_token().ok_or("No hay sesion del VPS")?;
+    api::staff_add(&token, &name, &uuid).await
+}
+
+#[tauri::command]
+async fn vps_staff_remove(uuid: String) -> Result<(), String> {
+    let token = api::load_token().ok_or("No hay sesion del VPS")?;
+    api::staff_remove(&token, &uuid).await
+}
+
+#[tauri::command]
 fn set_window_mode(window: tauri::WebviewWindow, mode: String) -> Result<(), String> {
     let mut max_w = 1920.0_f64;
     let mut max_h = 1080.0_f64;
@@ -899,6 +1068,17 @@ pub fn run() {
             whitelist_sync_github,
             uuid_lookup,
             set_window_mode,
+            vps_role,
+            vps_whitelist_get,
+            vps_whitelist_add,
+            vps_whitelist_remove,
+            vps_staff_list,
+            vps_staff_add,
+            vps_staff_remove,
+            vps_instances::vps_publisher_scan,
+            vps_instances::vps_instances_list,
+            vps_instances::vps_instance_publish,
+            vps_instances::vps_instance_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar NexusLauncher");

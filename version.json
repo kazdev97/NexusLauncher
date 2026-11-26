@@ -1,5 +1,5 @@
 {
-  "version": "0.1.5beta",
-  "notes": "Revision 0.1.5beta: puerta de acceso Nexus Creators con logo del estudio, controles de ventana y actualizador con orden de revisiones corregido.",
+  "version": "0.1.6beta",
+  "notes": "Revision 0.1.6beta: integracion completa con el VPS (login Microsoft a JWT, whitelist y staff centralizados, publicador de instancias con versiones dinamicas y sincronizacion VPS -> launcher)."
   "url": "https://raw.githubusercontent.com/kazdev97/NexusLauncher/main/builds/nexuslauncher.exe"
 }

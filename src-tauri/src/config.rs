@@ -142,6 +142,12 @@ pub struct Settings {
     /// Token de GitHub (solo owner). Se serializa a disco, pero `settings_get`
     /// devuelve una copia saneada para no exponerlo al frontend.
     pub github_token: String,
+    /// Token JWT de sesión del VPS (se oculta en `settings_get`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub api_token: String,
+    /// Rol cacheado del VPS (`owner`, `staff`, `player`, `user`).
+    #[serde(default)]
+    pub api_role: String,
 }
 
 impl Default for Settings {
@@ -162,6 +168,8 @@ impl Default for Settings {
             antilag_host: String::new(),
             discord_rpc_enabled: true,
             github_token: String::new(),
+            api_token: String::new(),
+            api_role: String::new(),
         }
     }
 }
